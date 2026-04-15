@@ -1,0 +1,5 @@
+email,name,phone,employee_id,subject_codes,max_weekly_hours
+john.smith@greenwood.edu,John Smith,+966501111001,EMP001,"MATH,SCI",20
+sara.jones@greenwood.edu,Sara Jones,+966501111002,EMP002,"ENG,ICT",18
+ahmed.ali@greenwood.edu,Ahmed Ali,+966501111003,EMP003,"ARA",20
+lisa.chen@greenwood.edu,Lisa Chen,+966501111004,EMP004,"SCI,PE",16

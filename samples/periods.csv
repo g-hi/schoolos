@@ -1,0 +1,8 @@
+sort_order,name,start_time,end_time
+1,Period 1,08:00,08:45
+2,Period 2,08:50,09:35
+3,Break,09:35,09:50
+4,Period 3,09:50,10:35
+5,Period 4,10:40,11:25
+6,Lunch,11:25,12:00
+7,Period 5,12:00,12:45

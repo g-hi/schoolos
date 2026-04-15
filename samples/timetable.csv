@@ -1,0 +1,21 @@
+day,period_order,grade,section,academic_year,subject_code,teacher_email
+Monday,1,Grade 1,A,2025-2026,MATH,john.smith@greenwood.edu
+Monday,2,Grade 1,A,2025-2026,ENG,sara.jones@greenwood.edu
+Monday,4,Grade 1,A,2025-2026,ARA,ahmed.ali@greenwood.edu
+Monday,5,Grade 1,A,2025-2026,SCI,john.smith@greenwood.edu
+Tuesday,1,Grade 1,A,2025-2026,ENG,sara.jones@greenwood.edu
+Tuesday,2,Grade 1,A,2025-2026,MATH,john.smith@greenwood.edu
+Tuesday,4,Grade 1,A,2025-2026,ICT,sara.jones@greenwood.edu
+Tuesday,5,Grade 1,A,2025-2026,PE,lisa.chen@greenwood.edu
+Wednesday,1,Grade 1,A,2025-2026,SCI,john.smith@greenwood.edu
+Wednesday,2,Grade 1,A,2025-2026,ARA,ahmed.ali@greenwood.edu
+Wednesday,4,Grade 1,A,2025-2026,MATH,john.smith@greenwood.edu
+Wednesday,5,Grade 1,A,2025-2026,ENG,sara.jones@greenwood.edu
+Thursday,1,Grade 1,A,2025-2026,PE,lisa.chen@greenwood.edu
+Thursday,2,Grade 1,A,2025-2026,SCI,lisa.chen@greenwood.edu
+Thursday,4,Grade 1,A,2025-2026,ENG,sara.jones@greenwood.edu
+Thursday,5,Grade 1,A,2025-2026,MATH,john.smith@greenwood.edu
+Monday,1,Grade 1,B,2025-2026,ENG,sara.jones@greenwood.edu
+Monday,2,Grade 1,B,2025-2026,MATH,john.smith@greenwood.edu
+Monday,4,Grade 1,B,2025-2026,SCI,lisa.chen@greenwood.edu
+Monday,5,Grade 1,B,2025-2026,ARA,ahmed.ali@greenwood.edu

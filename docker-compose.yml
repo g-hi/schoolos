@@ -1,0 +1,78 @@
+# ─────────────────────────────────────────────────────────────────────────────
+# SchoolOS – Local Development Infrastructure
+#
+# Starts three containers:
+#   1. postgres  – the main database (with RLS and multi-tenant schema)
+#   2. redis     – job queue and response cache
+#   3. gateway   – the FastAPI entry point (hot-reload enabled)
+#
+# Usage:
+#   docker compose up --build        ← first run or after code changes
+#   docker compose up                ← normal start
+#   docker compose down -v           ← stop and wipe all data
+# ─────────────────────────────────────────────────────────────────────────────
+
+services:
+
+  # ── PostgreSQL ─────────────────────────────────────────────────────────────
+  postgres:
+    image: postgres:16-alpine
+    container_name: schoolos_postgres
+    environment:
+      POSTGRES_DB:       schoolos
+      POSTGRES_USER:     schoolos_user
+      POSTGRES_PASSWORD: schoolos_pass
+    ports:
+      - "5432:5432"
+    volumes:
+      # Persist database data across container restarts
+      - postgres_data:/var/lib/postgresql/data
+      # This SQL file runs automatically the FIRST time the container starts
+      - ./infra/postgres/init.sql:/docker-entrypoint-initdb.d/01_init.sql
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U schoolos_user -d schoolos"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  # ── Redis ──────────────────────────────────────────────────────────────────
+  redis:
+    image: redis:7-alpine
+    container_name: schoolos_redis
+    ports:
+      - "6379:6379"
+    volumes:
+      - redis_data:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  # ── API Gateway ────────────────────────────────────────────────────────────
+  gateway:
+    build:
+      context: .
+      dockerfile: services/gateway/Dockerfile
+    container_name: schoolos_gateway
+    ports:
+      - "8000:8000"
+    env_file:
+      - .env
+    environment:
+      # Override DB/Redis URLs to use Docker service names as hostnames
+      DATABASE_URL: postgresql+asyncpg://schoolos_user:schoolos_pass@postgres:5432/schoolos
+      REDIS_URL:    redis://redis:6379/0
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    volumes:
+      # Mount source code so hot-reload works without rebuilding
+      - .:/app
+    restart: unless-stopped
+
+volumes:
+  postgres_data:
+  redis_data:

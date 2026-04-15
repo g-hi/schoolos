@@ -45,6 +45,27 @@ from services.gateway.routers.social import router as social_router
 async def lifespan(app: FastAPI):
     # ── Startup ──────────────────────────────────────────────────────────────
     print(f"SchoolOS Gateway starting in '{settings.app_env}' mode")
+
+    # Auto-create tables (safe for Render where init.sql doesn't run)
+    from shared.db.connection import engine
+    from shared.db.models import Base
+    async with engine.begin() as conn:
+        await conn.run_sync(Base.metadata.create_all)
+
+    # Seed default tenant if it doesn't exist
+    from shared.db.connection import AsyncSessionLocal
+    from shared.db.models import Tenant
+    from sqlalchemy import select
+    async with AsyncSessionLocal() as session:
+        result = await session.execute(select(Tenant).limit(1))
+        if result.scalar_one_or_none() is None:
+            session.add(Tenant(
+                name="Greenwood International Academy",
+                slug="greenwood",
+                domain="greenwood.schoolos.dev",
+            ))
+            await session.commit()
+
     yield
     # ── Shutdown ─────────────────────────────────────────────────────────────
     print("SchoolOS Gateway shutting down")

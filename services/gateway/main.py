@@ -65,7 +65,6 @@ async def lifespan(app: FastAPI):
                     session.add(Tenant(
                         name="Greenwood International Academy",
                         slug="greenwood",
-                        domain="greenwood.schoolos.dev",
                     ))
                     await session.commit()
             print("Database ready")

@@ -3,6 +3,17 @@
 import { useEffect, useState } from "react";
 import { api } from "@/lib/api";
 
+interface ApiTimetableEntry {
+  id: string;
+  day: string;
+  day_of_week: number;
+  period: { id: string; name: string; start_time: string; end_time: string };
+  subject: { id: string; code: string; name: string };
+  teacher: { id: string; name: string };
+  class: { id: string; grade: string; section: string };
+  is_active: boolean;
+}
+
 interface TimetableEntry {
   id: string;
   day_of_week: number;
@@ -10,18 +21,28 @@ interface TimetableEntry {
   subject_name: string;
   teacher_name: string;
   class_name: string;
-  room: string | null;
 }
 
-const DAYS = ["", "Monday", "Tuesday", "Wednesday", "Thursday", "Friday"];
+const DAYS = ["Monday", "Tuesday", "Wednesday", "Thursday", "Friday"];
 
 export default function TimetablePage() {
   const [entries, setEntries] = useState<TimetableEntry[]>([]);
   const [loading, setLoading] = useState(true);
 
   useEffect(() => {
-    api<TimetableEntry[]>("/timetable/")
-      .then(setEntries)
+    api<ApiTimetableEntry[]>("/timetable/")
+      .then((data) =>
+        setEntries(
+          data.map((e) => ({
+            id: e.id,
+            day_of_week: e.day_of_week,
+            period_label: e.period.name,
+            subject_name: e.subject.name,
+            teacher_name: e.teacher.name,
+            class_name: `${e.class.grade} ${e.class.section}`,
+          }))
+        )
+      )
       .catch(console.error)
       .finally(() => setLoading(false));
   }, []);
@@ -48,13 +69,29 @@ export default function TimetablePage() {
     <div>
       <div className="flex items-center justify-between mb-6">
         <h1 className="text-2xl font-bold">Timetable</h1>
-        <a
-          href={`${process.env.NEXT_PUBLIC_API_URL || "https://schoolos-gateway.onrender.com"}/timetable/download/pdf?tenant=greenwood`}
+        <button
+          onClick={async () => {
+            try {
+              const res = await fetch(
+                `${process.env.NEXT_PUBLIC_API_URL || "https://schoolos-gateway.onrender.com"}/timetable/download/pdf`,
+                { headers: { "X-Tenant-Slug": "greenwood" } }
+              );
+              if (!res.ok) throw new Error(await res.text());
+              const blob = await res.blob();
+              const url = URL.createObjectURL(blob);
+              const a = document.createElement("a");
+              a.href = url;
+              a.download = "timetable.pdf";
+              a.click();
+              URL.revokeObjectURL(url);
+            } catch (err) {
+              alert(String(err));
+            }
+          }}
           className="px-4 py-2 bg-indigo-600 text-white rounded-lg text-sm font-medium hover:bg-indigo-700"
-          target="_blank"
         >
           Download PDF
-        </a>
+        </button>
       </div>
 
       {entries.length === 0 ? (
@@ -67,7 +104,7 @@ export default function TimetablePage() {
             <thead className="bg-gray-50 border-b">
               <tr>
                 <th className="text-left px-4 py-3 font-medium text-gray-600">Period</th>
-                {[1, 2, 3, 4, 5].map((d) => (
+                {[0, 1, 2, 3, 4].map((d) => (
                   <th key={d} className="text-left px-4 py-3 font-medium text-gray-600">
                     {DAYS[d]}
                   </th>
@@ -78,7 +115,7 @@ export default function TimetablePage() {
               {periods.map((period) => (
                 <tr key={period} className="border-b last:border-0">
                   <td className="px-4 py-3 font-medium text-gray-700">{period}</td>
-                  {[1, 2, 3, 4, 5].map((day) => {
+                  {[0, 1, 2, 3, 4].map((day) => {
                     const cell = (byDay[day] || []).filter(
                       (e) => e.period_label === period
                     );

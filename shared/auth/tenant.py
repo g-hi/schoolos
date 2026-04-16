@@ -78,7 +78,12 @@ def _extract_slug(request: Request) -> str | None:
     if slug:
         return slug.lower().strip()
 
-    # 2. Subdomain check
+    # 2. Query parameter (for browser direct links like PDF downloads)
+    slug = request.query_params.get("tenant")
+    if slug:
+        return slug.lower().strip()
+
+    # 3. Subdomain check
     host = request.headers.get("host", "")
     # Remove port if present: "greenwood.schoolos.com:8000" → "greenwood.schoolos.com"
     host = host.split(":")[0]

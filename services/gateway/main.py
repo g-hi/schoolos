@@ -98,7 +98,7 @@ app = FastAPI(
 # In production, this should be locked to your actual domain.
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"] if settings.app_env == "development" else [],
+    allow_origins=["*"],
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],

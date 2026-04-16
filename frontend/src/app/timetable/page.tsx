@@ -18,43 +18,84 @@ interface TimetableEntry {
   id: string;
   day_of_week: number;
   period_label: string;
+  period_time: string;
   subject_name: string;
   teacher_name: string;
   class_name: string;
 }
 
+interface Teacher {
+  teacher_id: string;
+  name: string;
+  assigned_periods: number;
+  max_weekly_hours: number;
+  load_pct: number;
+  status: string;
+}
+
 const DAYS = ["Monday", "Tuesday", "Wednesday", "Thursday", "Friday"];
+
+function mapEntry(e: ApiTimetableEntry): TimetableEntry {
+  return {
+    id: e.id,
+    day_of_week: e.day_of_week,
+    period_label: e.period.name,
+    period_time: `${e.period.start_time}–${e.period.end_time}`,
+    subject_name: e.subject.name,
+    teacher_name: e.teacher.name,
+    class_name: `${e.class.grade} ${e.class.section}`,
+  };
+}
 
 export default function TimetablePage() {
   const [entries, setEntries] = useState<TimetableEntry[]>([]);
   const [loading, setLoading] = useState(true);
+  const [tab, setTab] = useState<"classes" | "teacher">("classes");
+  const [teachers, setTeachers] = useState<Teacher[]>([]);
+  const [selectedTeacher, setSelectedTeacher] = useState("");
+  const [teacherEntries, setTeacherEntries] = useState<TimetableEntry[]>([]);
+  const [teacherLoading, setTeacherLoading] = useState(false);
 
   useEffect(() => {
-    api<ApiTimetableEntry[]>("/timetable/")
-      .then((data) =>
-        setEntries(
-          data.map((e) => ({
-            id: e.id,
-            day_of_week: e.day_of_week,
-            period_label: e.period.name,
-            subject_name: e.subject.name,
-            teacher_name: e.teacher.name,
-            class_name: `${e.class.grade} ${e.class.section}`,
-          }))
-        )
-      )
+    Promise.all([
+      api<ApiTimetableEntry[]>("/timetable/"),
+      api<{ teachers: Teacher[] }>("/dashboard/teacher-load"),
+    ])
+      .then(([ttData, tlData]) => {
+        setEntries(ttData.map(mapEntry));
+        setTeachers(tlData.teachers);
+      })
       .catch(console.error)
       .finally(() => setLoading(false));
   }, []);
 
-  // Group by day
-  const byDay = entries.reduce<Record<number, TimetableEntry[]>>((acc, e) => {
-    (acc[e.day_of_week] ||= []).push(e);
-    return acc;
-  }, {});
+  useEffect(() => {
+    if (!selectedTeacher) {
+      setTeacherEntries([]);
+      return;
+    }
+    setTeacherLoading(true);
+    api<Record<string, ApiTimetableEntry[]>>(`/timetable/teacher/${selectedTeacher}`)
+      .then((data) => {
+        const flat = Object.values(data).flat().map(mapEntry);
+        setTeacherEntries(flat);
+      })
+      .catch(console.error)
+      .finally(() => setTeacherLoading(false));
+  }, [selectedTeacher]);
 
-  // Get unique periods
-  const periods = [...new Set(entries.map((e) => e.period_label))].sort();
+  // Build grid helper
+  function buildGrid(data: TimetableEntry[]) {
+    const byDay = data.reduce<Record<number, TimetableEntry[]>>((acc, e) => {
+      (acc[e.day_of_week] ||= []).push(e);
+      return acc;
+    }, {});
+    const periods = [...new Set(data.map((e) => e.period_label))].sort();
+    return { byDay, periods };
+  }
+
+  const { byDay, periods } = buildGrid(tab === "teacher" ? teacherEntries : entries);
+  const selectedTeacherObj = teachers.find((t) => t.teacher_id === selectedTeacher);
 
   if (loading) {
     return (
@@ -94,9 +135,80 @@ export default function TimetablePage() {
         </button>
       </div>
 
-      {entries.length === 0 ? (
+      {/* Tab switcher */}
+      <div className="flex gap-1 bg-gray-100 rounded-lg p-1 mb-6 w-fit">
+        <button
+          onClick={() => setTab("classes")}
+          className={`px-4 py-2 rounded-md text-sm font-medium transition ${
+            tab === "classes"
+              ? "bg-white text-indigo-700 shadow-sm"
+              : "text-gray-500 hover:text-gray-700"
+          }`}
+        >
+          All Classes
+        </button>
+        <button
+          onClick={() => setTab("teacher")}
+          className={`px-4 py-2 rounded-md text-sm font-medium transition ${
+            tab === "teacher"
+              ? "bg-white text-indigo-700 shadow-sm"
+              : "text-gray-500 hover:text-gray-700"
+          }`}
+        >
+          By Teacher
+        </button>
+      </div>
+
+      {/* Teacher selector */}
+      {tab === "teacher" && (
+        <div className="mb-6 flex items-center gap-4">
+          <select
+            value={selectedTeacher}
+            onChange={(e) => setSelectedTeacher(e.target.value)}
+            className="border border-gray-300 rounded-lg px-3 py-2 text-sm bg-white focus:ring-2 focus:ring-indigo-500 focus:border-indigo-500"
+          >
+            <option value="">Select a teacher…</option>
+            {teachers.map((t) => (
+              <option key={t.teacher_id} value={t.teacher_id}>
+                {t.name}
+              </option>
+            ))}
+          </select>
+          {selectedTeacherObj && (
+            <div className="flex gap-3 text-sm">
+              <span className="px-2 py-1 bg-indigo-50 text-indigo-700 rounded-md">
+                {selectedTeacherObj.assigned_periods} periods/week
+              </span>
+              <span className={`px-2 py-1 rounded-md ${
+                selectedTeacherObj.load_pct > 80
+                  ? "bg-red-50 text-red-700"
+                  : selectedTeacherObj.load_pct > 50
+                  ? "bg-amber-50 text-amber-700"
+                  : "bg-green-50 text-green-700"
+              }`}>
+                {selectedTeacherObj.load_pct.toFixed(0)}% load
+              </span>
+            </div>
+          )}
+        </div>
+      )}
+
+      {/* Grid */}
+      {tab === "teacher" && !selectedTeacher ? (
         <div className="bg-white rounded-xl border border-gray-200 p-12 text-center">
-          <p className="text-gray-500">No timetable entries yet. Upload a timetable CSV from the Data Upload page.</p>
+          <p className="text-gray-500">Select a teacher above to view their weekly schedule.</p>
+        </div>
+      ) : teacherLoading ? (
+        <div className="animate-pulse space-y-4">
+          <div className="h-96 bg-gray-200 rounded-xl" />
+        </div>
+      ) : (tab === "classes" ? entries : teacherEntries).length === 0 ? (
+        <div className="bg-white rounded-xl border border-gray-200 p-12 text-center">
+          <p className="text-gray-500">
+            {tab === "teacher"
+              ? "No classes assigned to this teacher yet."
+              : "No timetable entries yet. Upload a timetable CSV from the Data Upload page."}
+          </p>
         </div>
       ) : (
         <div className="bg-white rounded-xl border border-gray-200 overflow-x-auto">
@@ -114,7 +226,15 @@ export default function TimetablePage() {
             <tbody>
               {periods.map((period) => (
                 <tr key={period} className="border-b last:border-0">
-                  <td className="px-4 py-3 font-medium text-gray-700">{period}</td>
+                  <td className="px-4 py-3 font-medium text-gray-700 whitespace-nowrap">
+                    <div>{period}</div>
+                    {(byDay[0] || []).find((e) => e.period_label === period)?.period_time && (
+                      <div className="text-[10px] text-gray-400">
+                        {(byDay[0] || byDay[1] || byDay[2] || byDay[3] || byDay[4] || [])
+                          .find((e) => e.period_label === period)?.period_time}
+                      </div>
+                    )}
+                  </td>
                   {[0, 1, 2, 3, 4].map((day) => {
                     const cell = (byDay[day] || []).filter(
                       (e) => e.period_label === period
@@ -133,7 +253,7 @@ export default function TimetablePage() {
                                 {e.subject_name}
                               </p>
                               <p className="text-[11px] text-indigo-600">
-                                {e.teacher_name} &middot; {e.class_name}
+                                {tab === "teacher" ? e.class_name : `${e.teacher_name} · ${e.class_name}`}
                               </p>
                             </div>
                           ))

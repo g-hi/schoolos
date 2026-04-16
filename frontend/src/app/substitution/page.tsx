@@ -27,9 +27,9 @@ export default function SubstitutionPage() {
     setLoading(true);
     setError("");
     try {
-      const ids = teacherIds.split(",").map((s) => s.trim()).filter(Boolean);
+      const names = teacherIds.split(",").map((s) => s.trim()).filter(Boolean);
       const res = await apiPost("/substitution/report", {
-        absent_teacher_ids: ids,
+        absent_teachers: names,
         date,
       });
       setResult(res);
@@ -62,14 +62,14 @@ export default function SubstitutionPage() {
         <div className="grid grid-cols-1 md:grid-cols-2 gap-4 mb-4">
           <div>
             <label className="block text-sm font-medium text-gray-700 mb-1">
-              Teacher IDs (comma-separated)
+              Teacher Names (comma-separated)
             </label>
             <input
               type="text"
               value={teacherIds}
               onChange={(e) => setTeacherIds(e.target.value)}
               className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm"
-              placeholder="uuid1, uuid2"
+              placeholder="John Smith, Sara Jones"
             />
           </div>
           <div>

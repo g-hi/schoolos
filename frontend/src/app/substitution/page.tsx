@@ -79,6 +79,20 @@ export default function SubstitutionPage() {
     }
   }
 
+  async function resetSubs() {
+    if (!confirm(`Clear all substitutions for ${date}?`)) return;
+    try {
+      await api<{ deleted: number }>("/substitution/reset", {
+        method: "DELETE",
+        params: { date },
+      });
+      setSubs([]);
+      setResult(null);
+    } catch (err) {
+      setError(String(err));
+    }
+  }
+
   return (
     <div>
       <h1 className="text-2xl font-bold mb-6">Teacher Substitution</h1>
@@ -186,12 +200,22 @@ export default function SubstitutionPage() {
       <div className="bg-white rounded-xl border border-gray-200 p-6">
         <div className="flex items-center justify-between mb-4">
           <h2 className="font-semibold">Substitutions for {date}</h2>
-          <button
-            onClick={loadSubs}
-            className="text-sm text-indigo-600 hover:underline"
-          >
-            Refresh
-          </button>
+          <div className="flex gap-3">
+            <button
+              onClick={loadSubs}
+              className="text-sm text-indigo-600 hover:underline"
+            >
+              Refresh
+            </button>
+            {subs.length > 0 && (
+              <button
+                onClick={resetSubs}
+                className="text-sm text-red-500 hover:underline"
+              >
+                Reset
+              </button>
+            )}
+          </div>
         </div>
         {subs.length === 0 ? (
           <p className="text-gray-500 text-sm">No substitutions found for this date.</p>

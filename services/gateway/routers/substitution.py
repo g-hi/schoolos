@@ -29,7 +29,7 @@ from datetime import date as date_type, timedelta
 
 from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel
-from sqlalchemy import func, select
+from sqlalchemy import delete as sa_delete, func, select
 from sqlalchemy.orm import selectinload
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -396,6 +396,34 @@ async def list_substitutions(
     subs = q.scalars().all()
 
     return [_format_substitution(s) for s in subs]
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# DELETE /substitution/reset
+# ─────────────────────────────────────────────────────────────────────────────
+
+@router.delete("/reset", summary="Clear substitutions for a date")
+async def reset_substitutions(
+    date: str,
+    tenant: Tenant = Depends(resolve_tenant),
+    db: AsyncSession = Depends(get_db),
+):
+    """Delete all substitution records for the given date. For testing/admin use."""
+    await set_tenant_context(db, tenant.id)
+
+    try:
+        query_date = date_type.fromisoformat(date)
+    except ValueError:
+        raise HTTPException(status_code=400, detail="Invalid date format. Use YYYY-MM-DD.")
+
+    result = await db.execute(
+        sa_delete(Substitution).where(
+            Substitution.tenant_id == tenant.id,
+            Substitution.date == query_date,
+        )
+    )
+    await db.commit()
+    return {"deleted": result.rowcount, "date": date}
 
 
 # ─────────────────────────────────────────────────────────────────────────────

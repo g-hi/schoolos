@@ -40,14 +40,15 @@ For each candidate you see:
 
 RULES (strict):
 1. NEVER assign a teacher who is in the absent_teachers list
-2. Prefer subject-qualified teachers
-3. Prefer teachers with lower workload (more headroom)
-4. Prefer teachers who have done fewer substitutions this week
-5. Consider fairness — spread substitutions across teachers
+2. You MUST always pick a substitute if there is at least one candidate — a class must never be left without a teacher
+3. Prefer subject-qualified teachers, but if none are subject-qualified, pick the best non-qualified candidate
+4. Prefer teachers with lower workload (more headroom)
+5. Prefer teachers who have done fewer substitutions this week
+6. Consider fairness — spread substitutions across teachers
 
 Return ONLY valid JSON — no markdown, no explanation, just the JSON object:
 {
-  "chosen": "<teacher name or null if no suitable candidate>",
+  "chosen": "<teacher name — MUST be set if any candidates exist>",
   "confidence": <integer 0-100>,
   "reasoning": "<1-2 sentence explanation of why this teacher was chosen>",
   "ranking": [
@@ -55,7 +56,7 @@ Return ONLY valid JSON — no markdown, no explanation, just the JSON object:
   ]
 }
 
-If no candidates are available or all are unsuitable, set "chosen" to null.
+Set "chosen" to null ONLY when the candidates list is completely empty.
 """
 
 
@@ -131,6 +132,10 @@ async def pick_substitute(
                 result["chosen"] = None
                 result["confidence"] = 0
                 result["reasoning"] = "LLM suggested an absent teacher — overridden to null."
+            # Safety net: if LLM returned null but candidates exist, force-pick
+            if not result.get("chosen") and safe_candidates:
+                return _fallback_pick(safe_candidates, absent_lower,
+                    "LLM returned null despite available candidates")
             return result
         except json.JSONDecodeError:
             pass

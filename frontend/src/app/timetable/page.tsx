@@ -55,6 +55,7 @@ export default function TimetablePage() {
   const [selectedTeacher, setSelectedTeacher] = useState("");
   const [teacherEntries, setTeacherEntries] = useState<TimetableEntry[]>([]);
   const [teacherLoading, setTeacherLoading] = useState(false);
+  const [selectedClass, setSelectedClass] = useState("");
 
   useEffect(() => {
     Promise.all([
@@ -94,8 +95,15 @@ export default function TimetablePage() {
     return { byDay, periods };
   }
 
-  const { byDay, periods } = buildGrid(tab === "teacher" ? teacherEntries : entries);
+  const { byDay, periods } = buildGrid(
+    tab === "teacher"
+      ? teacherEntries
+      : selectedClass
+      ? entries.filter((e) => e.class_name === selectedClass)
+      : entries
+  );
   const selectedTeacherObj = teachers.find((t) => t.teacher_id === selectedTeacher);
+  const classList = [...new Set(entries.map((e) => e.class_name))].sort();
 
   if (loading) {
     return (
@@ -159,6 +167,29 @@ export default function TimetablePage() {
         </button>
       </div>
 
+      {/* Class selector */}
+      {tab === "classes" && (
+        <div className="mb-6 flex items-center gap-4">
+          <select
+            value={selectedClass}
+            onChange={(e) => setSelectedClass(e.target.value)}
+            className="border border-gray-300 rounded-lg px-3 py-2 text-sm bg-white focus:ring-2 focus:ring-indigo-500 focus:border-indigo-500"
+          >
+            <option value="">All classes</option>
+            {classList.map((c) => (
+              <option key={c} value={c}>
+                {c}
+              </option>
+            ))}
+          </select>
+          {selectedClass && (
+            <span className="px-2 py-1 bg-indigo-50 text-indigo-700 rounded-md text-sm">
+              {entries.filter((e) => e.class_name === selectedClass).length} periods/week
+            </span>
+          )}
+        </div>
+      )}
+
       {/* Teacher selector */}
       {tab === "teacher" && (
         <div className="mb-6 flex items-center gap-4">
@@ -202,7 +233,10 @@ export default function TimetablePage() {
         <div className="animate-pulse space-y-4">
           <div className="h-96 bg-gray-200 rounded-xl" />
         </div>
-      ) : (tab === "classes" ? entries : teacherEntries).length === 0 ? (
+      ) : (tab === "classes"
+          ? (selectedClass ? entries.filter((e) => e.class_name === selectedClass) : entries)
+          : teacherEntries
+        ).length === 0 ? (
         <div className="bg-white rounded-xl border border-gray-200 p-12 text-center">
           <p className="text-gray-500">
             {tab === "teacher"
@@ -253,7 +287,11 @@ export default function TimetablePage() {
                                 {e.subject_name}
                               </p>
                               <p className="text-[11px] text-indigo-600">
-                                {tab === "teacher" ? e.class_name : `${e.teacher_name} · ${e.class_name}`}
+                                {tab === "teacher"
+                                  ? e.class_name
+                                  : selectedClass
+                                  ? e.teacher_name
+                                  : `${e.teacher_name} · ${e.class_name}`}
                               </p>
                             </div>
                           ))

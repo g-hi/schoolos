@@ -64,6 +64,7 @@ class ReportAbsentRequest(BaseModel):
     date: str                           # "YYYY-MM-DD" e.g. "2025-04-14"
     absent_teachers: list[str]          # full names e.g. ["John Smith", "Sara Jones"]
     academic_year: str = "2025-2026"
+    absent_periods: list[str] | None = None  # optional period names e.g. ["Period 1", "Period 3"]
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -158,6 +159,11 @@ async def report_absent(
             )
         )
         entries = entries_q.scalars().all()
+
+        # Filter to specific periods if requested
+        if body.absent_periods:
+            period_names_lower = [p.strip().lower() for p in body.absent_periods]
+            entries = [e for e in entries if e.period.name.lower() in period_names_lower]
 
         if not entries:
             results.append({

@@ -1,7 +1,14 @@
 "use client";
 
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { apiPost, api } from "@/lib/api";
+
+interface Period {
+  id: string;
+  name: string;
+  start_time: string;
+  end_time: string;
+}
 
 interface Substitution {
   id: string;
@@ -15,23 +22,42 @@ interface Substitution {
   confidence_score: number | null;
 }
 
+const today = new Date().toISOString().split("T")[0];
+
 export default function SubstitutionPage() {
   const [teacherIds, setTeacherIds] = useState("");
-  const [date, setDate] = useState(new Date().toISOString().split("T")[0]);
+  const [date, setDate] = useState(today);
+  const [absenceType, setAbsenceType] = useState<"whole" | "specific">("whole");
+  const [periods, setPeriods] = useState<Period[]>([]);
+  const [selectedPeriods, setSelectedPeriods] = useState<string[]>([]);
   const [result, setResult] = useState<unknown>(null);
   const [subs, setSubs] = useState<Substitution[]>([]);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState("");
+
+  useEffect(() => {
+    api<Period[]>("/timetable/periods").then(setPeriods).catch(console.error);
+  }, []);
+
+  function togglePeriod(name: string) {
+    setSelectedPeriods((prev) =>
+      prev.includes(name) ? prev.filter((p) => p !== name) : [...prev, name]
+    );
+  }
 
   async function handleReport() {
     setLoading(true);
     setError("");
     try {
       const names = teacherIds.split(",").map((s) => s.trim()).filter(Boolean);
-      const res = await apiPost("/substitution/report", {
+      const payload: Record<string, unknown> = {
         absent_teachers: names,
         date,
-      });
+      };
+      if (absenceType === "specific" && selectedPeriods.length > 0) {
+        payload.absent_periods = selectedPeriods;
+      }
+      const res = await apiPost("/substitution/report", payload);
       setResult(res);
       loadSubs();
     } catch (err) {
@@ -79,11 +105,67 @@ export default function SubstitutionPage() {
             <input
               type="date"
               value={date}
+              min={today}
               onChange={(e) => setDate(e.target.value)}
               className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm"
             />
           </div>
         </div>
+
+        {/* Absence type */}
+        <div className="mb-4">
+          <label className="block text-sm font-medium text-gray-700 mb-2">Absence Type</label>
+          <div className="flex gap-4">
+            <label className="flex items-center gap-2 text-sm cursor-pointer">
+              <input
+                type="radio"
+                name="absenceType"
+                checked={absenceType === "whole"}
+                onChange={() => { setAbsenceType("whole"); setSelectedPeriods([]); }}
+                className="accent-indigo-600"
+              />
+              Whole Day
+            </label>
+            <label className="flex items-center gap-2 text-sm cursor-pointer">
+              <input
+                type="radio"
+                name="absenceType"
+                checked={absenceType === "specific"}
+                onChange={() => setAbsenceType("specific")}
+                className="accent-indigo-600"
+              />
+              Specific Periods
+            </label>
+          </div>
+        </div>
+
+        {/* Period checkboxes */}
+        {absenceType === "specific" && (
+          <div className="mb-4">
+            <label className="block text-sm font-medium text-gray-700 mb-2">Select Periods</label>
+            <div className="flex flex-wrap gap-2">
+              {periods.map((p) => (
+                <label
+                  key={p.id}
+                  className={`flex items-center gap-1.5 px-3 py-1.5 rounded-lg border text-sm cursor-pointer transition ${
+                    selectedPeriods.includes(p.name)
+                      ? "bg-indigo-50 border-indigo-300 text-indigo-700"
+                      : "bg-white border-gray-200 text-gray-600 hover:border-gray-300"
+                  }`}
+                >
+                  <input
+                    type="checkbox"
+                    checked={selectedPeriods.includes(p.name)}
+                    onChange={() => togglePeriod(p.name)}
+                    className="accent-indigo-600"
+                  />
+                  {p.name}
+                  <span className="text-[10px] text-gray-400">{p.start_time}–{p.end_time}</span>
+                </label>
+              ))}
+            </div>
+          </div>
+        )}
         <button
           onClick={handleReport}
           disabled={loading}

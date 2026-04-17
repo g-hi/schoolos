@@ -150,6 +150,33 @@ async def upload_periods(
 
 
 # ─────────────────────────────────────────────────────────────────────────────
+# GET /timetable/periods
+# ─────────────────────────────────────────────────────────────────────────────
+
+@router.get("/periods", summary="List all periods for the school day")
+async def list_periods(
+    tenant: Tenant = Depends(resolve_tenant),
+    db: AsyncSession = Depends(get_db),
+):
+    await set_tenant_context(db, tenant.id)
+    result = await db.execute(
+        select(Period)
+        .where(Period.tenant_id == tenant.id)
+        .order_by(Period.sort_order)
+    )
+    return [
+        {
+            "id": str(p.id),
+            "name": p.name,
+            "start_time": p.start_time,
+            "end_time": p.end_time,
+            "sort_order": p.sort_order,
+        }
+        for p in result.scalars().all()
+    ]
+
+
+# ─────────────────────────────────────────────────────────────────────────────
 # POST /timetable/upload
 # CSV columns: day, period_order, grade, section, academic_year,
 #              subject_code, teacher_email

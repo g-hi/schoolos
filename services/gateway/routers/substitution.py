@@ -1,7 +1,7 @@
 """
 Phase 3 – Substitution Router
 ==============================
-Handles teacher absences and automatic substitute assignment.
+Handles teacher absences and automatic substitute assignment using an LLM agent.
 
 Endpoints
 ---------
@@ -10,20 +10,17 @@ GET  /substitution/         – list substitutions for a date (admin record view
 
 HOW THE SUBSTITUTION ALGORITHM WORKS
 ──────────────────────────────────────
-1. Receive: date + list of absent teacher names + academic_year.
+1. Receive: date + list of absent teacher names + academic_year + optional periods.
 2. Detect day_of_week from date.
 3. For each absent teacher → find their timetable slots for that day.
-4. For each slot → find the best available substitute:
-     Priority 1: qualified for the same subject AND not busy AND within limits
-     Priority 2: any free teacher (not subject-matched) AND within limits
-5. Limits that disqualify a teacher from substituting:
-     a. Already teaching a lesson in the same period on that day (timetable)
-     b. Already assigned as substitute in that period on that date
-     c. Their weekly regular sessions >= max_weekly_hours (fully booked teacher)
-     d. Their substitutions this week >= max_substitutions_per_week
+4. For each slot → gather candidate profiles (qualifications, load, sub history).
+5. Send context to Groq LLM agent which reasons about the best pick:
+     - Never assigns absent teachers as substitutes
+     - Prefers subject-qualified teachers
+     - Considers workload fairness and substitution history
+     - Returns confidence score and reasoning
 6. Save each result as a Substitution row.
-7. Email assigned substitute teachers via SendGrid.
-8. Schedule a 5-min-before SMS reminder for each.
+7. Notify assigned substitute teachers and parents.
 """
 
 import asyncio
@@ -182,6 +179,7 @@ async def report_absent(
                 db, tenant, entry, absent_teacher.id,
                 body.date, body.academic_year,
                 week_start, week_end,
+                all_absent_teacher_names=body.absent_teachers,
             )
 
             # Save substitution record
@@ -401,7 +399,7 @@ async def list_substitutions(
 
 
 # ─────────────────────────────────────────────────────────────────────────────
-# Substitute finder algorithm
+# LLM-powered Substitute finder
 # ─────────────────────────────────────────────────────────────────────────────
 
 async def _find_substitute(
@@ -413,24 +411,18 @@ async def _find_substitute(
     academic_year: str,
     week_start: date_type,
     week_end: date_type,
+    all_absent_teacher_names: list[str] | None = None,
 ) -> tuple[Teacher | None, str | None, int, dict]:
     """
-    Finds the best available substitute for a timetable slot.
+    Uses the LLM substitution agent to pick the best substitute.
     Returns (teacher, skip_reason, confidence_score, confidence_reasons).
-
-    Confidence scoring (0-100):
-      - Free in the period:       20 pts  (baseline for all candidates)
-      - Subject-qualified:        35 pts  (teaches the exact subject)
-      - Load headroom:         0-25 pts   (how far below max_weekly_hours)
-      - Sub limit headroom:    0-20 pts   (how far below max_substitutions_per_week)
-
-    Priority: highest confidence score first.
     """
+    from services.gateway.ai.substitution_agent import pick_substitute
+
     report_date = date_type.fromisoformat(date_str)
+    absent_names = all_absent_teacher_names or []
 
-    # ── Who is already busy in this period on this day? ──────────────────────
-
-    # Busy via regular timetable
+    # ── Who is already busy in this period? ──────────────────────────────────
     busy_timetable_q = await db.execute(
         select(TimetableEntry.teacher_id).where(
             TimetableEntry.tenant_id == tenant.id,
@@ -458,60 +450,53 @@ async def _find_substitute(
     )
     busy_ids.update(busy_sub_q.scalars().all())
 
-    # Also exclude the absent teacher themselves
+    # Exclude the absent teacher
     busy_ids.add(absent_teacher_id)
 
-    # ── Get all teachers qualified for this subject ───────────────────────────
+    # ── Collect ALL absent teacher IDs to exclude them ────────────────────────
+    if absent_names:
+        absent_users_q = await db.execute(
+            select(Teacher.id)
+            .join(User, Teacher.user_id == User.id)
+            .where(
+                Teacher.tenant_id == tenant.id,
+                func.lower(User.name).in_([n.lower() for n in absent_names]),
+            )
+        )
+        for tid in absent_users_q.scalars().all():
+            busy_ids.add(tid)
+
+    # ── Subject-qualified teachers ────────────────────────────────────────────
     same_subject_q = await db.execute(
-        select(Teacher)
-        .join(TeacherSubject, TeacherSubject.teacher_id == Teacher.id)
-        .where(
+        select(TeacherSubject.teacher_id).where(
             TeacherSubject.subject_id == entry.subject_id,
-            Teacher.tenant_id == tenant.id,
-            Teacher.id.notin_(busy_ids),
         )
-        .options(selectinload(Teacher.user))
     )
-    same_subject = same_subject_q.scalars().all()
-    same_subject_ids = {t.id for t in same_subject}
+    same_subject_ids = set(same_subject_q.scalars().all())
 
-    # ── Get all other teachers (lower priority) ───────────────────────────────
-    other_q = await db.execute(
+    # ── All available candidates ──────────────────────────────────────────────
+    candidates_q = await db.execute(
         select(Teacher)
         .where(
             Teacher.tenant_id == tenant.id,
             Teacher.id.notin_(busy_ids),
-            Teacher.id.notin_([t.id for t in same_subject]),
         )
         .options(selectinload(Teacher.user))
     )
-    other_teachers = other_q.scalars().all()
-
-    # All candidates
-    candidates = same_subject + other_teachers
+    candidates = candidates_q.scalars().all()
 
     if not candidates:
-        return None, "All teachers are busy in this period.", 0, {}
+        return None, "All teachers are busy or absent in this period.", 0, {}
 
-    # ── Score each candidate ─────────────────────────────────────────────────
-    scored: list[tuple[Teacher, int, dict]] = []
+    # ── Build candidate profiles for the LLM ─────────────────────────────────
+    candidate_profiles = []
+    teacher_by_name: dict[str, Teacher] = {}
 
     for teacher in candidates:
-        reasons = {}
-        score = 0
+        name = teacher.user.name if teacher.user else f"Teacher-{teacher.id}"
+        teacher_by_name[name.lower()] = teacher
 
-        # Baseline: free in the period (always true for candidates)
-        score += 20
-        reasons["free_in_period"] = 20
-
-        # Subject match
-        if teacher.id in same_subject_ids:
-            score += 35
-            reasons["subject_qualified"] = 35
-        else:
-            reasons["subject_qualified"] = 0
-
-        # Load headroom: (max - assigned) / max * 25
+        # Weekly session count
         weekly_sessions = await db.scalar(
             select(func.count()).where(
                 TimetableEntry.teacher_id == teacher.id,
@@ -519,16 +504,12 @@ async def _find_substitute(
                 TimetableEntry.is_active.is_(True),
             )
         ) or 0
+
         max_h = teacher.max_weekly_hours or 20
         if weekly_sessions >= max_h:
-            continue  # full schedule — skip entirely
-        load_ratio = (max_h - weekly_sessions) / max_h
-        load_pts = round(load_ratio * 25)
-        score += load_pts
-        reasons["load_headroom"] = load_pts
-        reasons["load_detail"] = f"{weekly_sessions}/{max_h} periods used"
+            continue  # skip fully booked teachers
 
-        # Sub limit headroom: (max - used) / max * 20
+        # Subs this week
         subs_this_week = await db.scalar(
             select(func.count()).where(
                 Substitution.substitute_teacher_id == teacher.id,
@@ -538,25 +519,60 @@ async def _find_substitute(
                 Substitution.status == "assigned",
             )
         ) or 0
+
         max_subs = teacher.max_substitutions_per_week or 2
         if subs_this_week >= max_subs:
-            continue  # reached sub cap — skip entirely
-        sub_ratio = (max_subs - subs_this_week) / max_subs
-        sub_pts = round(sub_ratio * 20)
-        score += sub_pts
-        reasons["sub_headroom"] = sub_pts
-        reasons["sub_detail"] = f"{subs_this_week}/{max_subs} subs this week"
+            continue  # reached sub cap
 
-        scored.append((teacher, score, reasons))
+        candidate_profiles.append({
+            "name": name,
+            "is_subject_qualified": teacher.id in same_subject_ids,
+            "weekly_periods": weekly_sessions,
+            "max_weekly_hours": max_h,
+            "subs_this_week": subs_this_week,
+            "max_subs_per_week": max_subs,
+        })
 
-    if not scored:
+    if not candidate_profiles:
         return None, "All available teachers have reached their session or substitution limits.", 0, {}
 
-    # Sort by score descending — pick the best
-    scored.sort(key=lambda x: x[1], reverse=True)
-    best_teacher, best_score, best_reasons = scored[0]
+    # ── Ask the LLM agent ─────────────────────────────────────────────────────
+    slot_info = {
+        "subject": entry.subject.name,
+        "class": f"{entry.klass.grade} {entry.klass.section}",
+        "period": entry.period.name,
+        "time": entry.period.start_time,
+    }
 
-    return best_teacher, None, best_score, best_reasons
+    llm_result = await pick_substitute(
+        slot=slot_info,
+        absent_teacher_names=absent_names,
+        candidates=candidate_profiles,
+    )
+
+    chosen_name = llm_result.get("chosen")
+    if not chosen_name:
+        return None, llm_result.get("reasoning", "LLM found no suitable candidate."), 0, {}
+
+    # Map name back to Teacher object
+    chosen_teacher = teacher_by_name.get(chosen_name.lower())
+    if not chosen_teacher:
+        # Fuzzy fallback: try partial match
+        for key, t in teacher_by_name.items():
+            if chosen_name.lower() in key or key in chosen_name.lower():
+                chosen_teacher = t
+                break
+
+    if not chosen_teacher:
+        return None, f"LLM chose '{chosen_name}' but could not match to a teacher record.", 0, {}
+
+    confidence = llm_result.get("confidence", 50)
+    reasons = {
+        "ai_reasoning": llm_result.get("reasoning", ""),
+        "ranking": llm_result.get("ranking", []),
+    }
+
+    return chosen_teacher, None, confidence, reasons
 
 
 # ─────────────────────────────────────────────────────────────────────────────

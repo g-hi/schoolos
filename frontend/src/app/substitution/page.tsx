@@ -20,6 +20,7 @@ interface Substitution {
   period: { name: string; start_time: string };
   status: string;
   confidence_score: number | null;
+  confidence_reasons: { ai_reasoning?: string; ranking?: { name: string; score: number; reason: string }[] } | null;
 }
 
 const today = new Date().toISOString().split("T")[0];
@@ -204,6 +205,7 @@ export default function SubstitutionPage() {
                 <th className="text-left px-4 py-3 font-medium">Class</th>
                 <th className="text-left px-4 py-3 font-medium">Period</th>
                 <th className="text-left px-4 py-3 font-medium">Confidence</th>
+                <th className="text-left px-4 py-3 font-medium">AI Reasoning</th>
               </tr>
             </thead>
             <tbody>
@@ -220,6 +222,9 @@ export default function SubstitutionPage() {
                         {s.confidence_score}%
                       </span>
                     ) : "—"}
+                  </td>
+                  <td className="px-4 py-3 text-xs text-gray-500 max-w-xs">
+                    {s.confidence_reasons?.ai_reasoning || "—"}
                   </td>
                 </tr>
               ))}

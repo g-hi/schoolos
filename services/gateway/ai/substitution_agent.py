@@ -96,11 +96,12 @@ async def pick_substitute(
     }, indent=2)
 
     try:
+        api_key = settings.groq_api_key.strip()
         async with httpx.AsyncClient(timeout=30) as client:
             resp = await client.post(
                 _GROQ_URL,
                 headers={
-                    "Authorization": f"Bearer {settings.groq_api_key}",
+                    "Authorization": f"Bearer {api_key}",
                     "Content-Type": "application/json",
                 },
                 json={

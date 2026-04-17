@@ -32,10 +32,11 @@ Supported constraint_type values:
 import json
 import re
 
-from langchain_groq import ChatGroq
-from langchain_core.messages import HumanMessage, SystemMessage
+import httpx
 
 from shared.config import get_settings
+
+_GROQ_URL = "https://api.groq.com/openai/v1/chat/completions"
 
 # ── System prompt ─────────────────────────────────────────────────────────────
 _SYSTEM_PROMPT = """You are a school timetable constraint parser.
@@ -77,16 +78,6 @@ Rules:
 """
 
 
-def _build_llm() -> ChatGroq:
-    settings = get_settings()
-    return ChatGroq(
-        api_key=settings.groq_api_key,
-        model=settings.llm_model,
-        max_tokens=512,
-        temperature=0,         # deterministic parsing
-    )
-
-
 def parse_constraint(raw_text: str) -> dict:
     """
     Takes a plain-English constraint and returns:
@@ -97,19 +88,28 @@ def parse_constraint(raw_text: str) -> dict:
       }
 
     Raises ValueError if the LLM returns non-JSON or an unrecognised structure.
-
-    This function is synchronous — it's called from an async FastAPI handler
-    using asyncio.run_in_executor (see timetable router).
     """
-    llm = _build_llm()
+    settings = get_settings()
 
-    messages = [
-        SystemMessage(content=_SYSTEM_PROMPT),
-        HumanMessage(content=raw_text),
-    ]
-
-    response = llm.invoke(messages)
-    raw_response = response.content.strip()
+    resp = httpx.post(
+        _GROQ_URL,
+        headers={
+            "Authorization": f"Bearer {settings.groq_api_key}",
+            "Content-Type": "application/json",
+        },
+        json={
+            "model": settings.llm_model,
+            "messages": [
+                {"role": "system", "content": _SYSTEM_PROMPT},
+                {"role": "user", "content": raw_text},
+            ],
+            "temperature": 0,
+            "max_tokens": 512,
+        },
+        timeout=30,
+    )
+    resp.raise_for_status()
+    raw_response = resp.json()["choices"][0]["message"]["content"].strip()
 
     # Strip markdown code fences if the LLM added them despite instructions
     raw_response = re.sub(r"^```(?:json)?\s*", "", raw_response, flags=re.MULTILINE)

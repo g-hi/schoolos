@@ -14,14 +14,14 @@ The LLM also enforces rules the old algorithm missed — e.g. never assigning
 an absent teacher as a substitute.
 """
 
-import asyncio
 import json
 import re
 
-from langchain_groq import ChatGroq
-from langchain_core.messages import HumanMessage, SystemMessage
+import httpx
 
 from shared.config import get_settings
+
+_GROQ_URL = "https://api.groq.com/openai/v1/chat/completions"
 
 _SYSTEM_PROMPT = """You are a smart school substitution agent. Your job is to pick the best substitute teacher for a class when the regular teacher is absent.
 
@@ -96,24 +96,30 @@ async def pick_substitute(
     }, indent=2)
 
     try:
-        llm = ChatGroq(
-            model="llama-3.1-8b-instant",
-            api_key=settings.groq_api_key,
-            temperature=0,
-            max_tokens=512,
-        )
-
-        messages = [
-            SystemMessage(content=_SYSTEM_PROMPT),
-            HumanMessage(content=context),
-        ]
-        response = await asyncio.to_thread(llm.invoke, messages)
+        async with httpx.AsyncClient(timeout=30) as client:
+            resp = await client.post(
+                _GROQ_URL,
+                headers={
+                    "Authorization": f"Bearer {settings.groq_api_key}",
+                    "Content-Type": "application/json",
+                },
+                json={
+                    "model": "llama-3.1-8b-instant",
+                    "messages": [
+                        {"role": "system", "content": _SYSTEM_PROMPT},
+                        {"role": "user", "content": context},
+                    ],
+                    "temperature": 0,
+                    "max_tokens": 512,
+                },
+            )
+            resp.raise_for_status()
+            text = resp.json()["choices"][0]["message"]["content"].strip()
     except Exception as e:
         # LLM failed — fall back to simple rule-based pick
         return _fallback_pick(safe_candidates, absent_lower, str(e))
 
     # Parse JSON from response
-    text = response.content.strip()
     # Try to extract JSON from possible markdown wrapping
     json_match = re.search(r'\{[\s\S]*\}', text)
     if json_match:

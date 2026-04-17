@@ -94,17 +94,21 @@ async def pick_substitute(
         "candidates": safe_candidates,
     }, indent=2)
 
-    llm = ChatGroq(
-        model="llama-3.1-8b-instant",
-        api_key=settings.groq_api_key,
-        temperature=0,
-        max_tokens=512,
-    )
+    try:
+        llm = ChatGroq(
+            model="llama-3.1-8b-instant",
+            api_key=settings.groq_api_key,
+            temperature=0,
+            max_tokens=512,
+        )
 
-    response = await llm.ainvoke([
-        SystemMessage(content=_SYSTEM_PROMPT),
-        HumanMessage(content=context),
-    ])
+        response = await llm.ainvoke([
+            SystemMessage(content=_SYSTEM_PROMPT),
+            HumanMessage(content=context),
+        ])
+    except Exception as e:
+        # LLM failed — fall back to simple rule-based pick
+        return _fallback_pick(safe_candidates, absent_lower, str(e))
 
     # Parse JSON from response
     text = response.content.strip()
@@ -123,9 +127,24 @@ async def pick_substitute(
             pass
 
     # Fallback if LLM response is unparseable
+    return _fallback_pick(safe_candidates, absent_lower, f"Unparseable LLM response: {text[:100]}")
+
+
+def _fallback_pick(candidates: list[dict], absent_lower: set[str], reason: str) -> dict:
+    """Simple rule-based fallback when LLM is unavailable."""
+    # Pick the candidate with lowest workload who is subject-qualified
+    qualified = [c for c in candidates if c.get("is_subject_qualified") and c["name"].lower() not in absent_lower]
+    pool = qualified or [c for c in candidates if c["name"].lower() not in absent_lower]
+
+    if not pool:
+        return {"chosen": None, "confidence": 0, "reasoning": f"Fallback: no candidates. {reason}", "ranking": []}
+
+    # Sort by lowest load
+    pool.sort(key=lambda c: c.get("weekly_periods", 99))
+    best = pool[0]
     return {
-        "chosen": None,
-        "confidence": 0,
-        "reasoning": f"Could not parse LLM response: {text[:200]}",
-        "ranking": [],
+        "chosen": best["name"],
+        "confidence": 55,
+        "reasoning": f"Fallback pick (LLM unavailable: {reason[:80]}). Chose {best['name']} — {'subject-qualified, ' if best.get('is_subject_qualified') else ''}lowest workload.",
+        "ranking": [{"name": c["name"], "score": 50, "reason": "fallback"} for c in pool],
     }

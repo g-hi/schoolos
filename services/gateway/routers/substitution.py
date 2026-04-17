@@ -175,12 +175,17 @@ async def report_absent(
         slot_results = []
 
         for entry in entries:
-            substitute, reason, confidence, confidence_reasons = await _find_substitute(
-                db, tenant, entry, absent_teacher.id,
-                body.date, body.academic_year,
-                week_start, week_end,
-                all_absent_teacher_names=body.absent_teachers,
-            )
+            try:
+                substitute, reason, confidence, confidence_reasons = await _find_substitute(
+                    db, tenant, entry, absent_teacher.id,
+                    body.date, body.academic_year,
+                    week_start, week_end,
+                    all_absent_teacher_names=body.absent_teachers,
+                )
+            except Exception as exc:
+                substitute, reason, confidence, confidence_reasons = (
+                    None, f"Error finding substitute: {exc}", 0, {}
+                )
 
             # Save substitution record
             sub_status = "assigned" if substitute else "no_substitute_found"

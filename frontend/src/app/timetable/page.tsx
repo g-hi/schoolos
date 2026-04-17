@@ -53,8 +53,6 @@ export default function TimetablePage() {
   const [tab, setTab] = useState<"classes" | "teacher">("classes");
   const [teachers, setTeachers] = useState<Teacher[]>([]);
   const [selectedTeacher, setSelectedTeacher] = useState("");
-  const [teacherEntries, setTeacherEntries] = useState<TimetableEntry[]>([]);
-  const [teacherLoading, setTeacherLoading] = useState(false);
   const [selectedClass, setSelectedClass] = useState("");
 
   useEffect(() => {
@@ -70,21 +68,6 @@ export default function TimetablePage() {
       .finally(() => setLoading(false));
   }, []);
 
-  useEffect(() => {
-    if (!selectedTeacher) {
-      setTeacherEntries([]);
-      return;
-    }
-    setTeacherLoading(true);
-    api<Record<string, ApiTimetableEntry[]>>(`/timetable/teacher/${selectedTeacher}`)
-      .then((data) => {
-        const flat = Object.values(data).flat().map(mapEntry);
-        setTeacherEntries(flat);
-      })
-      .catch(console.error)
-      .finally(() => setTeacherLoading(false));
-  }, [selectedTeacher]);
-
   // Build grid helper
   function buildGrid(data: TimetableEntry[]) {
     const byDay = data.reduce<Record<number, TimetableEntry[]>>((acc, e) => {
@@ -95,14 +78,15 @@ export default function TimetablePage() {
     return { byDay, periods };
   }
 
-  const { byDay, periods } = buildGrid(
-    tab === "teacher"
-      ? teacherEntries
-      : selectedClass
-      ? entries.filter((e) => e.class_name === selectedClass)
-      : entries
-  );
+  // Filter entries based on active tab + selection
   const selectedTeacherObj = teachers.find((t) => t.teacher_id === selectedTeacher);
+  const filteredEntries =
+    tab === "teacher" && selectedTeacherObj
+      ? entries.filter((e) => e.teacher_name === selectedTeacherObj.name)
+      : tab === "classes" && selectedClass
+      ? entries.filter((e) => e.class_name === selectedClass)
+      : entries;
+  const { byDay, periods } = buildGrid(filteredEntries);
   const classList = [...new Set(entries.map((e) => e.class_name))].sort();
 
   if (loading) {
@@ -229,14 +213,7 @@ export default function TimetablePage() {
         <div className="bg-white rounded-xl border border-gray-200 p-12 text-center">
           <p className="text-gray-500">Select a teacher above to view their weekly schedule.</p>
         </div>
-      ) : teacherLoading ? (
-        <div className="animate-pulse space-y-4">
-          <div className="h-96 bg-gray-200 rounded-xl" />
-        </div>
-      ) : (tab === "classes"
-          ? (selectedClass ? entries.filter((e) => e.class_name === selectedClass) : entries)
-          : teacherEntries
-        ).length === 0 ? (
+      ) : filteredEntries.length === 0 ? (
         <div className="bg-white rounded-xl border border-gray-200 p-12 text-center">
           <p className="text-gray-500">
             {tab === "teacher"

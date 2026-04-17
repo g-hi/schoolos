@@ -14,6 +14,7 @@ The LLM also enforces rules the old algorithm missed — e.g. never assigning
 an absent teacher as a substitute.
 """
 
+import asyncio
 import json
 import re
 
@@ -102,10 +103,11 @@ async def pick_substitute(
             max_tokens=512,
         )
 
-        response = await llm.ainvoke([
+        messages = [
             SystemMessage(content=_SYSTEM_PROMPT),
             HumanMessage(content=context),
-        ])
+        ]
+        response = await asyncio.to_thread(llm.invoke, messages)
     except Exception as e:
         # LLM failed — fall back to simple rule-based pick
         return _fallback_pick(safe_candidates, absent_lower, str(e))

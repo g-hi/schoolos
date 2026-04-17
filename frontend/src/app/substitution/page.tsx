@@ -13,11 +13,11 @@ interface Period {
 interface Substitution {
   id: string;
   date: string;
-  absent_teacher_name: string;
-  substitute_teacher_name: string | null;
-  subject_name: string;
-  class_name: string;
-  period_label: string;
+  absent_teacher: string;
+  substitute: string | null;
+  subject: string;
+  class: { grade: string; section: string };
+  period: { name: string; start_time: string };
   status: string;
   confidence_score: number | null;
 }
@@ -209,11 +209,11 @@ export default function SubstitutionPage() {
             <tbody>
               {subs.map((s) => (
                 <tr key={s.id} className="border-b last:border-0">
-                  <td className="px-4 py-3">{s.absent_teacher_name}</td>
-                  <td className="px-4 py-3">{s.substitute_teacher_name || "—"}</td>
-                  <td className="px-4 py-3">{s.subject_name}</td>
-                  <td className="px-4 py-3">{s.class_name}</td>
-                  <td className="px-4 py-3">{s.period_label}</td>
+                  <td className="px-4 py-3">{s.absent_teacher}</td>
+                  <td className="px-4 py-3">{s.substitute || "—"}</td>
+                  <td className="px-4 py-3">{s.subject}</td>
+                  <td className="px-4 py-3">{s.class.grade} {s.class.section}</td>
+                  <td className="px-4 py-3">{s.period.name}</td>
                   <td className="px-4 py-3">
                     {s.confidence_score != null ? (
                       <span className={`font-medium ${s.confidence_score >= 70 ? "text-green-600" : s.confidence_score >= 40 ? "text-amber-600" : "text-red-600"}`}>

@@ -315,6 +315,16 @@ async def generate_duties(
     Generates a recurring weekly duty pattern for the academic year.
     Batches all slot-locations per day into ONE LLM call (5 calls total).
     """
+    import traceback
+    try:
+        return await _do_generate(body, tenant, db)
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"{type(e).__name__}: {e}\n{traceback.format_exc()[-500:]}")
+
+
+async def _do_generate(body: GenerateRequest, tenant: Tenant, db: AsyncSession):
     from services.gateway.ai.duty_agent import pick_duty_teachers_batch
 
     await set_tenant_context(db, tenant.id)

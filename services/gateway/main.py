@@ -54,6 +54,22 @@ async def lifespan(app: FastAPI):
             from shared.db.connection import engine
             from shared.db.models import Base
             async with engine.begin() as conn:
+                # One-time schema fix: drop old duty_assignments table so
+                # create_all can recreate it with the correct schema
+                # (removed week_start column, changed constraints)
+                await conn.execute(text("""
+                    DO $$
+                    BEGIN
+                        IF EXISTS (
+                            SELECT 1 FROM information_schema.columns
+                            WHERE table_name = 'duty_assignments'
+                              AND column_name = 'week_start'
+                        ) THEN
+                            DROP TABLE duty_assignments CASCADE;
+                        END IF;
+                    END $$
+                """))
+
                 await conn.run_sync(Base.metadata.create_all)
 
             # Seed default tenant if it doesn't exist

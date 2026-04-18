@@ -30,12 +30,12 @@ from shared.db.models import (
 DAY_NAMES = ["Monday", "Tuesday", "Wednesday", "Thursday", "Friday"]
 
 
-async def build_duty_pdf(tenant_id: UUID, week_start: date_type) -> bytes:
-    data = await _load_data(tenant_id, week_start)
+async def build_duty_pdf(tenant_id: UUID, academic_year: str) -> bytes:
+    data = await _load_data(tenant_id, academic_year)
     return _render_pdf(data)
 
 
-async def _load_data(tenant_id: UUID, week_start: date_type) -> dict:
+async def _load_data(tenant_id: UUID, academic_year: str) -> dict:
     async with AsyncSessionLocal() as session:
         await set_tenant_context(session, tenant_id)
 
@@ -53,7 +53,7 @@ async def _load_data(tenant_id: UUID, week_start: date_type) -> dict:
             select(DutyAssignment)
             .where(
                 DutyAssignment.tenant_id == tenant_id,
-                DutyAssignment.week_start == week_start,
+                DutyAssignment.academic_year == academic_year,
             )
             .options(
                 selectinload(DutyAssignment.teacher).selectinload(Teacher.user),
@@ -71,12 +71,9 @@ async def _load_data(tenant_id: UUID, week_start: date_type) -> dict:
         loc_name = a.location.name if a.location else "—"
         grid.setdefault(key, []).append({"teacher": teacher_name, "location": loc_name})
 
-    week_end = week_start + timedelta(days=4)
-
     return {
         "school_name": tenant.name,
-        "week_start": week_start,
-        "week_end": week_end,
+        "academic_year": academic_year,
         "slots": [{"id": str(s.id), "name": s.name, "start": s.start_time, "end": s.end_time} for s in slots],
         "grid": grid,
     }
@@ -91,8 +88,7 @@ class _PDF(FPDF):
 
 def _render_pdf(data: dict) -> bytes:
     school_name = data["school_name"]
-    week_start: date_type = data["week_start"]
-    week_end: date_type = data["week_end"]
+    academic_year = data["academic_year"]
     slots = data["slots"]
     grid = data["grid"]
 
@@ -103,11 +99,11 @@ def _render_pdf(data: dict) -> bytes:
     pdf.set_font("Helvetica", "B", 16)
     pdf.set_fill_color(66, 66, 150)
     pdf.set_text_color(255, 255, 255)
-    pdf.cell(0, 12, f"{school_name} - Weekly Duty Roster", align="C", fill=True, new_x="LMARGIN", new_y="NEXT")
+    pdf.cell(0, 12, f"{school_name} - Duty Roster", align="C", fill=True, new_x="LMARGIN", new_y="NEXT")
 
     pdf.set_font("Helvetica", "", 11)
     pdf.set_text_color(80, 80, 80)
-    pdf.cell(0, 8, f"Week: {week_start.strftime('%B %d')} - {week_end.strftime('%B %d, %Y')}", align="C", new_x="LMARGIN", new_y="NEXT")
+    pdf.cell(0, 8, f"Academic Year: {academic_year}  (Recurring Weekly Pattern)", align="C", new_x="LMARGIN", new_y="NEXT")
     pdf.ln(4)
 
     # Column widths

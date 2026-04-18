@@ -29,14 +29,6 @@ interface Assignment {
   reasoning: string | null;
 }
 
-function getMonday(d: Date): string {
-  const day = d.getDay();
-  const diff = d.getDate() - day + (day === 0 ? -6 : 1);
-  const mon = new Date(d);
-  mon.setDate(diff);
-  return mon.toISOString().slice(0, 10);
-}
-
 export default function DutyPage() {
   const [tab, setTab] = useState<"roster" | "setup">("roster");
 
@@ -50,7 +42,7 @@ export default function DutyPage() {
   const [newSlotEnd, setNewSlotEnd] = useState("");
 
   // Roster state
-  const [weekStart, setWeekStart] = useState(getMonday(new Date()));
+  const [academicYear] = useState("2025-2026");
   const [assignments, setAssignments] = useState<Assignment[]>([]);
   const [generating, setGenerating] = useState(false);
   const [loading, setLoading] = useState(false);
@@ -61,16 +53,14 @@ export default function DutyPage() {
     api<Slot[]>("/duties/slots").then(setSlots).catch(() => {});
   }, []);
 
-  // Load assignments when weekStart changes
+  // Load assignments on mount
   useEffect(() => {
-    if (weekStart) {
-      setLoading(true);
-      api<Assignment[]>("/duties/", { params: { week_start: weekStart } })
-        .then(setAssignments)
-        .catch(() => setAssignments([]))
-        .finally(() => setLoading(false));
-    }
-  }, [weekStart]);
+    setLoading(true);
+    api<Assignment[]>("/duties/", { params: { academic_year: academicYear } })
+      .then(setAssignments)
+      .catch(() => setAssignments([]))
+      .finally(() => setLoading(false));
+  }, [academicYear]);
 
   const addLocation = async () => {
     if (!newLocName.trim()) return;
@@ -100,11 +90,10 @@ export default function DutyPage() {
     setGenerating(true);
     try {
       await apiPost("/duties/generate", {
-        week_start: weekStart,
-        academic_year: "2025-2026",
+        academic_year: academicYear,
       });
       // Reload assignments
-      const data = await api<Assignment[]>("/duties/", { params: { week_start: weekStart } });
+      const data = await api<Assignment[]>("/duties/", { params: { academic_year: academicYear } });
       setAssignments(data);
     } catch (e: unknown) {
       alert((e as Error).message);
@@ -114,14 +103,14 @@ export default function DutyPage() {
   };
 
   const resetDuties = async () => {
-    if (!confirm("Clear all duty assignments for this week?")) return;
-    await api("/duties/reset", { method: "DELETE", params: { week_start: weekStart } });
+    if (!confirm("Clear all duty assignments for this academic year? You can regenerate after.")) return;
+    await api("/duties/reset", { method: "DELETE", params: { academic_year: academicYear } });
     setAssignments([]);
   };
 
   const downloadPdf = async () => {
     const res = await fetch(
-      `${API_BASE}/duties/download/pdf?week_start=${weekStart}`,
+      `${API_BASE}/duties/download/pdf?academic_year=${academicYear}`,
       { headers: { "X-Tenant-Slug": TENANT } }
     );
     if (!res.ok) return alert("PDF download failed");
@@ -129,7 +118,7 @@ export default function DutyPage() {
     const url = URL.createObjectURL(blob);
     const a = document.createElement("a");
     a.href = url;
-    a.download = `duty_roster_${weekStart}.pdf`;
+    a.download = `duty_roster_${academicYear}.pdf`;
     a.click();
     URL.revokeObjectURL(url);
   };
@@ -267,15 +256,9 @@ export default function DutyPage() {
         <div className="space-y-4">
           {/* Controls */}
           <div className="flex items-center gap-4 flex-wrap">
-            <label className="text-sm text-gray-600">
-              Week of:
-              <input
-                type="date"
-                value={weekStart}
-                onChange={(e) => setWeekStart(e.target.value)}
-                className="ml-2 border rounded-lg px-3 py-1.5 text-sm"
-              />
-            </label>
+            <span className="text-sm text-gray-600 bg-gray-100 px-3 py-1.5 rounded-lg">
+              Academic Year: <b>{academicYear}</b>
+            </span>
             <button
               onClick={generate}
               disabled={generating || slots.length === 0 || locations.length === 0}

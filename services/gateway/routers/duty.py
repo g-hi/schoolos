@@ -17,7 +17,6 @@ GET  /duties/download/pdf    – download duty roster as PDF
 """
 
 import uuid
-from datetime import date as date_type, timedelta
 
 from fastapi import APIRouter, Depends, HTTPException
 from fastapi.responses import Response
@@ -58,7 +57,6 @@ class SlotCreate(BaseModel):
     end_time: str       # "08:00"
 
 class GenerateRequest(BaseModel):
-    week_start: str          # "YYYY-MM-DD" — must be a Monday
     academic_year: str = "2025-2026"
 
 
@@ -157,31 +155,23 @@ async def list_slots(
 # POST /duties/generate — auto-assign teachers for a week
 # ─────────────────────────────────────────────────────────────────────────────
 
-@router.post("/generate", summary="Auto-assign duty roster for a week (LLM-powered)")
+@router.post("/generate", summary="Auto-assign recurring duty roster (LLM-powered)")
 async def generate_duties(
     body: GenerateRequest,
     tenant: Tenant = Depends(resolve_tenant),
     db: AsyncSession = Depends(get_db),
 ):
     """
+    Generates a recurring weekly duty pattern for the academic year.
     For each (day, duty_slot, location):
       1. Check each teacher's timetable to see if they're free during that slot.
-      2. Count their existing duties this week.
+      2. Count their assigned duties so far (for fairness).
       3. Ask the LLM agent to pick the fairest teacher.
-      4. Save the DutyAssignment.
+      4. Save the DutyAssignment (recurring — no specific week).
     """
     from services.gateway.ai.duty_agent import pick_duty_teacher
 
     await set_tenant_context(db, tenant.id)
-
-    # Validate week_start is a Monday
-    try:
-        week_start = date_type.fromisoformat(body.week_start)
-    except ValueError:
-        raise HTTPException(status_code=400, detail="Invalid date format. Use YYYY-MM-DD.")
-
-    if week_start.weekday() != 0:
-        raise HTTPException(status_code=400, detail="week_start must be a Monday.")
 
     # Load duty slots and locations
     slots_q = await db.execute(
@@ -241,7 +231,7 @@ async def generate_duties(
         teacher_weekly_periods[te.teacher_id] = teacher_weekly_periods.get(te.teacher_id, 0) + 1
 
     results = []
-    duty_count_this_week: dict[uuid.UUID, int] = {}  # track as we assign
+    duty_count: dict[uuid.UUID, int] = {}  # track total duties for fairness
 
     for day_idx in range(5):  # Mon-Fri
         for duty_slot in duty_slots:
@@ -259,7 +249,7 @@ async def generate_duties(
                     )
 
                     weekly_periods = teacher_weekly_periods.get(teacher.id, 0)
-                    duties = duty_count_this_week.get(teacher.id, 0)
+                    duties = duty_count.get(teacher.id, 0)
 
                     candidates.append({
                         "name": name,
@@ -309,12 +299,11 @@ async def generate_duties(
                         duty_slot_id=duty_slot.id,
                         location_id=location.id,
                         day_of_week=day_idx,
-                        week_start=week_start,
                         academic_year=body.academic_year,
                         ai_reasoning=reasoning,
                     )
                     db.add(assignment)
-                    duty_count_this_week[chosen_teacher.id] = duty_count_this_week.get(chosen_teacher.id, 0) + 1
+                    duty_count[chosen_teacher.id] = duty_count.get(chosen_teacher.id, 0) + 1
 
                 results.append({
                     "day": DAY_NAMES[day_idx],
@@ -333,13 +322,12 @@ async def generate_duties(
         action="duty.generated",
         entity_type="DutyAssignment",
         entity_id=None,
-        details={"week_start": body.week_start, "total_assignments": sum(1 for r in results if r["teacher"])},
+        details={"academic_year": body.academic_year, "total_assignments": sum(1 for r in results if r["teacher"])},
     )
     await db.commit()
 
     assigned = sum(1 for r in results if r["teacher"])
     return {
-        "week_start": body.week_start,
         "academic_year": body.academic_year,
         "assignments": results,
         "summary": {
@@ -351,27 +339,22 @@ async def generate_duties(
 
 
 # ─────────────────────────────────────────────────────────────────────────────
-# GET /duties/ — view assignments for a week
+# GET /duties/ — view recurring duty pattern
 # ─────────────────────────────────────────────────────────────────────────────
 
-@router.get("/", summary="View duty assignments for a week")
+@router.get("/", summary="View recurring duty roster for an academic year")
 async def list_duties(
-    week_start: str,
+    academic_year: str = "2025-2026",
     tenant: Tenant = Depends(resolve_tenant),
     db: AsyncSession = Depends(get_db),
 ):
     await set_tenant_context(db, tenant.id)
 
-    try:
-        ws = date_type.fromisoformat(week_start)
-    except ValueError:
-        raise HTTPException(status_code=400, detail="Invalid date format. Use YYYY-MM-DD.")
-
     q = await db.execute(
         select(DutyAssignment)
         .where(
             DutyAssignment.tenant_id == tenant.id,
-            DutyAssignment.week_start == ws,
+            DutyAssignment.academic_year == academic_year,
         )
         .options(
             selectinload(DutyAssignment.teacher).selectinload(Teacher.user),
@@ -398,30 +381,25 @@ async def list_duties(
 
 
 # ─────────────────────────────────────────────────────────────────────────────
-# DELETE /duties/reset — clear assignments for a week
+# DELETE /duties/reset — clear duty roster for a year
 # ─────────────────────────────────────────────────────────────────────────────
 
-@router.delete("/reset", summary="Clear duty assignments for a week")
+@router.delete("/reset", summary="Clear duty roster for an academic year")
 async def reset_duties(
-    week_start: str,
+    academic_year: str = "2025-2026",
     tenant: Tenant = Depends(resolve_tenant),
     db: AsyncSession = Depends(get_db),
 ):
     await set_tenant_context(db, tenant.id)
 
-    try:
-        ws = date_type.fromisoformat(week_start)
-    except ValueError:
-        raise HTTPException(status_code=400, detail="Invalid date format. Use YYYY-MM-DD.")
-
     result = await db.execute(
         sa_delete(DutyAssignment).where(
             DutyAssignment.tenant_id == tenant.id,
-            DutyAssignment.week_start == ws,
+            DutyAssignment.academic_year == academic_year,
         )
     )
     await db.commit()
-    return {"deleted": result.rowcount, "week_start": week_start}
+    return {"deleted": result.rowcount, "academic_year": academic_year}
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -430,18 +408,13 @@ async def reset_duties(
 
 @router.get("/download/pdf", summary="Download duty roster as PDF")
 async def download_duty_pdf(
-    week_start: str,
+    academic_year: str = "2025-2026",
     tenant: Tenant = Depends(resolve_tenant),
 ):
     from services.gateway.ai.duty_pdf import build_duty_pdf
 
-    try:
-        ws = date_type.fromisoformat(week_start)
-    except ValueError:
-        raise HTTPException(status_code=400, detail="Invalid date format. Use YYYY-MM-DD.")
-
-    pdf_bytes = await build_duty_pdf(tenant.id, ws)
-    filename = f"duty_roster_{tenant.slug}_{week_start}.pdf"
+    pdf_bytes = await build_duty_pdf(tenant.id, academic_year)
+    filename = f"duty_roster_{tenant.slug}_{academic_year}.pdf"
     return Response(
         content=pdf_bytes,
         media_type="application/pdf",

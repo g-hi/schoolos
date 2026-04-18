@@ -629,13 +629,15 @@ class DutySlot(Base):
 
 
 # ─────────────────────────────────────────────────────────────────────────────
-# DutyAssignment  (teacher → slot + location for a specific week)
+# DutyAssignment  (recurring weekly pattern for the term/year)
 # ─────────────────────────────────────────────────────────────────────────────
 
 class DutyAssignment(Base):
     """
-    Assigns a teacher to cover a duty location during a duty slot on a specific day.
-    week_start is the Monday of the week this assignment belongs to.
+    Assigns a teacher to cover a duty location during a duty slot on a
+    specific day of the week.  This is a **recurring weekly pattern** that
+    applies for the entire academic_year / term.  It is generated once and
+    only adjusted when a teacher leaves or the timetable changes.
     """
     __tablename__ = "duty_assignments"
 
@@ -645,7 +647,6 @@ class DutyAssignment(Base):
     duty_slot_id:    Mapped[uuid.UUID]  = mapped_column(UUID(as_uuid=True), ForeignKey("duty_slots.id", ondelete="CASCADE"), nullable=False)
     location_id:     Mapped[uuid.UUID]  = mapped_column(UUID(as_uuid=True), ForeignKey("duty_locations.id", ondelete="CASCADE"), nullable=False)
     day_of_week:     Mapped[int]        = mapped_column(Integer, nullable=False)           # 0=Mon … 4=Fri
-    week_start:      Mapped[date_type]  = mapped_column(Date, nullable=False, index=True)  # Monday of the week
     academic_year:   Mapped[str]        = mapped_column(String(20), nullable=False)
     ai_reasoning:    Mapped[str | None] = mapped_column(Text, nullable=True)
     created_at:      Mapped[datetime]   = mapped_column(DateTime(timezone=True), server_default=func.now())
@@ -657,10 +658,10 @@ class DutyAssignment(Base):
 
     __table_args__ = (
         # Same teacher can't be in two places at the same time on the same day
-        UniqueConstraint("tenant_id", "teacher_id", "duty_slot_id", "day_of_week", "week_start",
+        UniqueConstraint("tenant_id", "teacher_id", "duty_slot_id", "day_of_week", "academic_year",
                          name="uq_teacher_duty_slot_day"),
         # Same location+slot+day can only have one teacher
-        UniqueConstraint("tenant_id", "location_id", "duty_slot_id", "day_of_week", "week_start",
+        UniqueConstraint("tenant_id", "location_id", "duty_slot_id", "day_of_week", "academic_year",
                          name="uq_location_duty_slot_day"),
         CheckConstraint("day_of_week BETWEEN 0 AND 4", name="valid_duty_day"),
     )

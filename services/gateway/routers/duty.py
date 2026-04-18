@@ -16,6 +16,7 @@ DELETE /duties/reset          – clear assignments for a week
 GET  /duties/download/pdf    – download duty roster as PDF
 """
 
+import asyncio
 import uuid
 
 from fastapi import APIRouter, Depends, HTTPException
@@ -329,6 +330,15 @@ async def _do_generate(body: GenerateRequest, tenant: Tenant, db: AsyncSession):
 
     await set_tenant_context(db, tenant.id)
 
+    # ── Clear previous assignments for this academic year ──
+    await db.execute(
+        sa_delete(DutyAssignment).where(
+            DutyAssignment.tenant_id == tenant.id,
+            DutyAssignment.academic_year == body.academic_year,
+        )
+    )
+    await db.flush()
+
     # Load slot-location mappings
     sl_q = await db.execute(
         select(DutySlotLocation)
@@ -397,6 +407,8 @@ async def _do_generate(body: GenerateRequest, tenant: Tenant, db: AsyncSession):
 
     results = []
     duty_count: dict[uuid.UUID, int] = {}
+    # Track (teacher_id, slot_id, day_idx) to enforce unique constraint
+    assigned_combos: set[tuple] = set()
 
     for day_idx in range(5):  # Mon-Fri
         # Build duties list for this day
@@ -436,6 +448,10 @@ async def _do_generate(body: GenerateRequest, tenant: Tenant, db: AsyncSession):
             teachers=teacher_profiles,
         )
 
+        # Small delay between days to avoid Groq rate limits
+        if day_idx < 4:
+            await asyncio.sleep(2)
+
         # Process results and save to DB
         for r in day_results:
             chosen_name = r.get("chosen")
@@ -454,18 +470,44 @@ async def _do_generate(body: GenerateRequest, tenant: Tenant, db: AsyncSession):
             loc_obj = loc_by_name.get(r.get("location", ""))
 
             if chosen_teacher and slot_obj and loc_obj:
-                assignment = DutyAssignment(
-                    id=uuid.uuid4(),
-                    tenant_id=tenant.id,
-                    teacher_id=chosen_teacher.id,
-                    duty_slot_id=slot_obj.id,
-                    location_id=loc_obj.id,
-                    day_of_week=day_idx,
-                    academic_year=body.academic_year,
-                    ai_reasoning=reasoning,
-                )
-                db.add(assignment)
-                duty_count[chosen_teacher.id] = duty_count.get(chosen_teacher.id, 0) + 1
+                combo = (chosen_teacher.id, slot_obj.id, day_idx)
+                if combo in assigned_combos:
+                    # Teacher already assigned to this slot+day — pick alternate
+                    used_names = {
+                        (t.user.name if t.user else "").lower()
+                        for tid, sid, di in assigned_combos
+                        if sid == slot_obj.id and di == day_idx
+                        for t in all_teachers
+                        if t.id == tid
+                    }
+                    for t in sorted(all_teachers, key=lambda x: duty_count.get(x.id, 0)):
+                        tname = t.user.name.lower() if t.user else ""
+                        if tname not in used_names:
+                            # Check not busy
+                            periods_today = teacher_schedule.get((t.id, day_idx), [])
+                            if not _times_overlap(slot_obj.start_time, slot_obj.end_time, periods_today):
+                                chosen_teacher = t
+                                combo = (t.id, slot_obj.id, day_idx)
+                                reasoning = f"Re-assigned to avoid duplicate (original: {chosen_name})"
+                                break
+                    else:
+                        # All teachers already used or busy — skip
+                        chosen_teacher = None
+
+                if chosen_teacher and combo not in assigned_combos:
+                    assigned_combos.add(combo)
+                    assignment = DutyAssignment(
+                        id=uuid.uuid4(),
+                        tenant_id=tenant.id,
+                        teacher_id=chosen_teacher.id,
+                        duty_slot_id=slot_obj.id,
+                        location_id=loc_obj.id,
+                        day_of_week=day_idx,
+                        academic_year=body.academic_year,
+                        ai_reasoning=reasoning,
+                    )
+                    db.add(assignment)
+                    duty_count[chosen_teacher.id] = duty_count.get(chosen_teacher.id, 0) + 1
 
             results.append({
                 "day": DAY_NAMES[day_idx],

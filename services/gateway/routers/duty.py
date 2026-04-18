@@ -448,9 +448,9 @@ async def _do_generate(body: GenerateRequest, tenant: Tenant, db: AsyncSession):
             teachers=teacher_profiles,
         )
 
-        # Small delay between days to avoid Groq rate limits
+        # Delay between days to avoid Groq rate limits
         if day_idx < 4:
-            await asyncio.sleep(2)
+            await asyncio.sleep(4)
 
         # Process results and save to DB
         for r in day_results:

@@ -85,7 +85,7 @@ async def pick_duty_teachers_batch(
                             {"role": "user", "content": context},
                         ],
                         "temperature": 0.2,
-                        "max_tokens": 1024,
+                        "max_tokens": 2048,
                     },
                 )
                 if resp.status_code == 429:

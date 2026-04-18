@@ -158,6 +158,10 @@ async def report_absent(
         )
         entries = entries_q.scalars().all()
 
+        # Exclude non-academic periods (Break, Lunch, etc.)
+        NON_ACADEMIC = {"break", "lunch"}
+        entries = [e for e in entries if e.period.name.lower() not in NON_ACADEMIC]
+
         # Filter to specific periods if requested
         if body.absent_periods:
             period_names_lower = [p.strip().lower() for p in body.absent_periods]
@@ -580,7 +584,7 @@ async def _find_substitute(
             )
         ) or 0
 
-        max_subs = teacher.max_substitutions_per_week or 2
+        max_subs = teacher.max_substitutions_per_week or 5
         if subs_this_week >= max_subs:
             continue  # reached sub cap
 

@@ -702,19 +702,25 @@ async def generate_timetable(
 @router.get("/download/pdf", summary="Download timetable as PDF")
 async def download_pdf(
     academic_year: str = "2025-2026",
+    view: str = "class",
     tenant: Tenant = Depends(resolve_tenant),
 ):
     """
-    Generates and downloads a branded PDF timetable (one page per class).
-    The school name is pulled from the tenant record.
+    Generates and downloads a branded PDF timetable.
+    - view=class   → one page per class  (default)
+    - view=teacher → one page per teacher
 
     Returns: application/pdf binary download.
     """
     from services.gateway.ai.pdf_export import build_timetable_pdf
 
-    pdf_bytes = await build_timetable_pdf(tenant.id, academic_year)
+    if view not in ("class", "teacher"):
+        view = "class"
 
-    filename = f"timetable_{tenant.slug}_{academic_year}.pdf"
+    pdf_bytes = await build_timetable_pdf(tenant.id, academic_year, view=view)
+
+    label = "by_teacher" if view == "teacher" else "by_class"
+    filename = f"timetable_{tenant.slug}_{label}_{academic_year}.pdf"
     return Response(
         content=pdf_bytes,
         media_type="application/pdf",

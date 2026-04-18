@@ -105,8 +105,9 @@ export default function TimetablePage() {
         <button
           onClick={async () => {
             try {
+              const pdfView = tab === "teacher" ? "teacher" : "class";
               const res = await fetch(
-                `${process.env.NEXT_PUBLIC_API_URL || "https://schoolos-gateway.onrender.com"}/timetable/download/pdf`,
+                `${process.env.NEXT_PUBLIC_API_URL || "https://schoolos-gateway.onrender.com"}/timetable/download/pdf?view=${pdfView}`,
                 { headers: { "X-Tenant-Slug": "greenwood" } }
               );
               if (!res.ok) throw new Error(await res.text());
@@ -114,7 +115,7 @@ export default function TimetablePage() {
               const url = URL.createObjectURL(blob);
               const a = document.createElement("a");
               a.href = url;
-              a.download = "timetable.pdf";
+              a.download = `timetable_${pdfView}.pdf`;
               a.click();
               URL.revokeObjectURL(url);
             } catch (err) {
@@ -123,7 +124,7 @@ export default function TimetablePage() {
           }}
           className="px-4 py-2 bg-indigo-600 text-white rounded-lg text-sm font-medium hover:bg-indigo-700"
         >
-          Download PDF
+          Download PDF ({tab === "teacher" ? "By Teacher" : "By Class"})
         </button>
       </div>
 

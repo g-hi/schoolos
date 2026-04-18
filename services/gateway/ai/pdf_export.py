@@ -45,16 +45,21 @@ DAYS = ["Monday", "Tuesday", "Wednesday", "Thursday", "Friday"]
 # Public entry point
 # ─────────────────────────────────────────────────────────────────────────────
 
-async def build_timetable_pdf(tenant_id: UUID, academic_year: str) -> bytes:
+async def build_timetable_pdf(
+    tenant_id: UUID, academic_year: str, view: str = "class",
+) -> bytes:
     """
-    Build a multi-page PDF timetable (one page per class).
-    Returns raw bytes suitable for a FastAPI FileResponse / Response.
+    Build a multi-page PDF timetable.
+      view="class"   → one page per class  (cells show Subject + Teacher)
+      view="teacher" → one page per teacher (cells show Subject + Class)
+    Returns raw bytes suitable for a FastAPI Response.
     """
     data = await _load_pdf_data(tenant_id, academic_year)
 
-    # Run the synchronous fpdf2 work on the current thread
-    # (fpdf2 is fast enough that we don't need run_in_executor)
-    pdf_bytes = _render_pdf(data, academic_year)
+    if view == "teacher":
+        pdf_bytes = _render_teacher_pdf(data, academic_year)
+    else:
+        pdf_bytes = _render_pdf(data, academic_year)
     return pdf_bytes
 
 
@@ -105,15 +110,27 @@ async def _load_pdf_data(tenant_id: UUID, academic_year: str) -> dict:
 
     # Build lookup:  (class_id, day_of_week, period_id) → (subject_name, teacher_name)
     cell: dict[tuple, tuple[str, str]] = {}
+    # Teacher view:  (teacher_user_name, day_of_week, period_id) → (subject_name, class_label)
+    teacher_cell: dict[tuple, tuple[str, str]] = {}
+    teacher_names: set[str] = set()
+
     for e in entries:
         key = (str(e.class_id), e.day_of_week, str(e.period_id))
-        cell[key] = (e.subject.name, e.teacher.user.name)
+        t_name = e.teacher.user.name
+        class_label = f"{e.klass.grade} {e.klass.section}"
+        cell[key] = (e.subject.name, t_name)
+
+        t_key = (t_name, e.day_of_week, str(e.period_id))
+        teacher_cell[t_key] = (e.subject.name, class_label)
+        teacher_names.add(t_name)
 
     return {
-        "school_name": tenant.name,
-        "classes":     classes,
-        "periods":     periods,
-        "cell":        cell,
+        "school_name":    tenant.name,
+        "classes":        classes,
+        "periods":        periods,
+        "cell":           cell,
+        "teacher_cell":   teacher_cell,
+        "teacher_names":  sorted(teacher_names),
     }
 
 
@@ -226,6 +243,97 @@ def _render_pdf(data: dict, academic_year: str) -> bytes:
             pdf.set_xy(MARGIN, new_y)
 
     # Return bytes
+    buf = io.BytesIO()
+    pdf.output(buf)
+    return buf.getvalue()
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Teacher-view PDF rendering  (one page per teacher)
+# ─────────────────────────────────────────────────────────────────────────────
+
+def _render_teacher_pdf(data: dict, academic_year: str) -> bytes:
+    school_name   = data["school_name"]
+    periods       = data["periods"]
+    teacher_cell  = data["teacher_cell"]
+    teacher_names = data["teacher_names"]
+
+    pdf = _PDF(school_name)
+
+    PAGE_W     = 297
+    MARGIN     = 10
+    USABLE_W   = PAGE_W - 2 * MARGIN
+    N_DAYS     = 5
+    PERIOD_COL = 28
+    DAY_COL_W  = (USABLE_W - PERIOD_COL) / N_DAYS
+    ROW_H      = 14
+    HEADER_H   = 8
+
+    for teacher_name in teacher_names:
+        pdf.add_page()
+        pdf.set_margins(MARGIN, MARGIN)
+
+        # ── Page title ────────────────────────────────────────────────────
+        pdf.set_font("Helvetica", "B", 16)
+        pdf.set_fill_color(30, 80, 160)
+        pdf.set_text_color(255, 255, 255)
+        pdf.cell(
+            USABLE_W, 10,
+            f"{school_name}  |  {teacher_name}  |  {academic_year}",
+            border=0, new_x="LMARGIN", new_y="NEXT",
+            align="C", fill=True,
+        )
+        pdf.ln(2)
+
+        # ── Day header row ────────────────────────────────────────────────
+        pdf.set_font("Helvetica", "B", 10)
+        pdf.set_fill_color(220, 230, 245)
+        pdf.set_text_color(0, 0, 0)
+
+        pdf.cell(PERIOD_COL, HEADER_H, "", border=1, fill=True)
+        for day_name in DAYS:
+            pdf.cell(DAY_COL_W, HEADER_H, day_name, border=1, align="C", fill=True)
+        pdf.ln()
+
+        # ── Period rows ───────────────────────────────────────────────────
+        for period in periods:
+            pdf.set_font("Helvetica", "B", 9)
+            pdf.set_fill_color(245, 245, 245)
+            pdf.set_text_color(50, 50, 50)
+
+            period_label = f"P{period.sort_order}\n{period.start_time[:5]}-{period.end_time[:5]}"
+            x_before = pdf.get_x()
+            y_before = pdf.get_y()
+            pdf.multi_cell(
+                PERIOD_COL, ROW_H / 2,
+                period_label,
+                border=1, align="C", fill=True,
+            )
+            row_bottom = pdf.get_y()
+
+            pdf.set_xy(x_before + PERIOD_COL, y_before)
+            pdf.set_font("Helvetica", "", 8)
+            pdf.set_fill_color(255, 255, 255)
+            pdf.set_text_color(0, 0, 0)
+
+            for day_idx in range(N_DAYS):
+                key = (teacher_name, day_idx, str(period.id))
+                subject_name, class_label = teacher_cell.get(key, ("", ""))
+                cell_text = f"{subject_name}\n{class_label}" if subject_name else ""
+                pdf.multi_cell(
+                    DAY_COL_W, ROW_H / 2,
+                    cell_text,
+                    border=1, align="C", fill=True, max_line_height=4,
+                )
+                if day_idx < N_DAYS - 1:
+                    pdf.set_xy(
+                        x_before + PERIOD_COL + (day_idx + 1) * DAY_COL_W,
+                        y_before,
+                    )
+
+            new_y = max(row_bottom, y_before + ROW_H)
+            pdf.set_xy(MARGIN, new_y)
+
     buf = io.BytesIO()
     pdf.output(buf)
     return buf.getvalue()

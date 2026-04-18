@@ -23,6 +23,8 @@ interface Substitution {
   confidence_reasons: { ai_reasoning?: string; ranking?: { name: string; score: number; reason: string }[] } | null;
 }
 
+const API_BASE = process.env.NEXT_PUBLIC_API_URL || "https://schoolos-gateway.onrender.com";
+const TENANT = process.env.NEXT_PUBLIC_TENANT_SLUG || "greenwood";
 const today = new Date().toISOString().split("T")[0];
 
 export default function SubstitutionPage() {
@@ -91,6 +93,23 @@ export default function SubstitutionPage() {
     } catch (err) {
       setError(String(err));
     }
+  }
+
+  function downloadPdf() {
+    const url = `${API_BASE}/substitution/download/pdf?date=${date}`;
+    const a = document.createElement("a");
+    a.href = url;
+    a.download = `substitution_${date}.pdf`;
+    // Need to add tenant header — use fetch + blob approach
+    fetch(url, { headers: { "X-Tenant-Slug": TENANT } })
+      .then((r) => r.blob())
+      .then((blob) => {
+        const blobUrl = URL.createObjectURL(blob);
+        a.href = blobUrl;
+        a.click();
+        URL.revokeObjectURL(blobUrl);
+      })
+      .catch((err) => setError(String(err)));
   }
 
   return (
@@ -208,12 +227,20 @@ export default function SubstitutionPage() {
               Refresh
             </button>
             {subs.length > 0 && (
-              <button
-                onClick={resetSubs}
-                className="text-sm text-red-500 hover:underline"
-              >
-                Reset
-              </button>
+              <>
+                <button
+                  onClick={downloadPdf}
+                  className="text-sm text-indigo-600 hover:underline"
+                >
+                  Download PDF
+                </button>
+                <button
+                  onClick={resetSubs}
+                  className="text-sm text-red-500 hover:underline"
+                >
+                  Reset
+                </button>
+              </>
             )}
           </div>
         </div>

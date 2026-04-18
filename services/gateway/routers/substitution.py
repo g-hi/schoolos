@@ -28,6 +28,7 @@ import uuid
 from datetime import date as date_type, timedelta
 
 from fastapi import APIRouter, Depends, HTTPException
+from fastapi.responses import Response
 from pydantic import BaseModel
 from sqlalchemy import delete as sa_delete, func, select
 from sqlalchemy.orm import selectinload
@@ -429,6 +430,32 @@ async def reset_substitutions(
     )
     await db.commit()
     return {"deleted": result.rowcount, "date": date}
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# GET /substitution/download/pdf
+# ─────────────────────────────────────────────────────────────────────────────
+
+@router.get("/download/pdf", summary="Download substitution plan as PDF")
+async def download_substitution_pdf(
+    date: str,
+    tenant: Tenant = Depends(resolve_tenant),
+):
+    """Download the substitution plan for a date as a PDF."""
+    from services.gateway.ai.substitution_pdf import build_substitution_pdf
+
+    try:
+        report_date = date_type.fromisoformat(date)
+    except ValueError:
+        raise HTTPException(status_code=400, detail="Invalid date format. Use YYYY-MM-DD.")
+
+    pdf_bytes = await build_substitution_pdf(tenant.id, report_date)
+    filename = f"substitution_{tenant.slug}_{date}.pdf"
+    return Response(
+        content=pdf_bytes,
+        media_type="application/pdf",
+        headers={"Content-Disposition": f'attachment; filename="{filename}"'},
+    )
 
 
 # ─────────────────────────────────────────────────────────────────────────────

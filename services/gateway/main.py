@@ -34,6 +34,7 @@ from services.gateway.routers.pickup import router as pickup_router
 from services.gateway.routers.audit import router as audit_router
 from services.gateway.routers.dashboard import router as dashboard_router
 from services.gateway.routers.social import router as social_router
+from services.gateway.routers.duty import router as duty_router
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -117,6 +118,7 @@ app.include_router(pickup_router)
 app.include_router(audit_router)
 app.include_router(dashboard_router)
 app.include_router(social_router)
+app.include_router(duty_router)
 
 # =============================================================================
 # ROUTES

@@ -578,3 +578,89 @@ class SocialMention(Base):
     engagement:     Mapped[int | None]          = mapped_column(Integer, nullable=True)      # likes+comments+shares
     processed:      Mapped[bool]                = mapped_column(Boolean, default=False, index=True)
     created_at:     Mapped[datetime]            = mapped_column(DateTime(timezone=True), server_default=func.now())
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# DutyLocation  (named places where teachers supervise)
+# ─────────────────────────────────────────────────────────────────────────────
+
+class DutyLocation(Base):
+    """
+    A named location in the school where duty is required
+    (e.g. Main Gate, Playground, Cafeteria, Corridor A).
+    """
+    __tablename__ = "duty_locations"
+
+    id:          Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    tenant_id:   Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), ForeignKey("tenants.id", ondelete="CASCADE"), nullable=False, index=True)
+    name:        Mapped[str]       = mapped_column(String(255), nullable=False)
+    description: Mapped[str | None] = mapped_column(Text, nullable=True)
+    is_active:   Mapped[bool]      = mapped_column(Boolean, default=True)
+    created_at:  Mapped[datetime]  = mapped_column(DateTime(timezone=True), server_default=func.now())
+
+    __table_args__ = (
+        UniqueConstraint("tenant_id", "name", name="uq_duty_location_per_tenant"),
+    )
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# DutySlot  (time windows for duties: Morning, Break, Lunch, Closing, etc.)
+# ─────────────────────────────────────────────────────────────────────────────
+
+class DutySlot(Base):
+    """
+    A named time window when duty coverage is needed.
+    Not the same as timetable periods — these can be Morning Arrival,
+    Break, Lunch, Closing, etc.
+    """
+    __tablename__ = "duty_slots"
+
+    id:         Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    tenant_id:  Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), ForeignKey("tenants.id", ondelete="CASCADE"), nullable=False, index=True)
+    name:       Mapped[str]       = mapped_column(String(100), nullable=False)   # e.g. "Morning Arrival", "Break", "Lunch", "Closing"
+    start_time: Mapped[str]       = mapped_column(String(5), nullable=False)     # "07:30"
+    end_time:   Mapped[str]       = mapped_column(String(5), nullable=False)     # "08:00"
+    is_active:  Mapped[bool]      = mapped_column(Boolean, default=True)
+    created_at: Mapped[datetime]  = mapped_column(DateTime(timezone=True), server_default=func.now())
+
+    __table_args__ = (
+        UniqueConstraint("tenant_id", "name", name="uq_duty_slot_per_tenant"),
+    )
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# DutyAssignment  (teacher → slot + location for a specific week)
+# ─────────────────────────────────────────────────────────────────────────────
+
+class DutyAssignment(Base):
+    """
+    Assigns a teacher to cover a duty location during a duty slot on a specific day.
+    week_start is the Monday of the week this assignment belongs to.
+    """
+    __tablename__ = "duty_assignments"
+
+    id:              Mapped[uuid.UUID]  = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    tenant_id:       Mapped[uuid.UUID]  = mapped_column(UUID(as_uuid=True), ForeignKey("tenants.id", ondelete="CASCADE"), nullable=False, index=True)
+    teacher_id:      Mapped[uuid.UUID]  = mapped_column(UUID(as_uuid=True), ForeignKey("teachers.id", ondelete="CASCADE"), nullable=False)
+    duty_slot_id:    Mapped[uuid.UUID]  = mapped_column(UUID(as_uuid=True), ForeignKey("duty_slots.id", ondelete="CASCADE"), nullable=False)
+    location_id:     Mapped[uuid.UUID]  = mapped_column(UUID(as_uuid=True), ForeignKey("duty_locations.id", ondelete="CASCADE"), nullable=False)
+    day_of_week:     Mapped[int]        = mapped_column(Integer, nullable=False)           # 0=Mon … 4=Fri
+    week_start:      Mapped[date_type]  = mapped_column(Date, nullable=False, index=True)  # Monday of the week
+    academic_year:   Mapped[str]        = mapped_column(String(20), nullable=False)
+    ai_reasoning:    Mapped[str | None] = mapped_column(Text, nullable=True)
+    created_at:      Mapped[datetime]   = mapped_column(DateTime(timezone=True), server_default=func.now())
+
+    # Relationships
+    teacher:       Mapped["Teacher"]      = relationship("Teacher")
+    duty_slot:     Mapped["DutySlot"]     = relationship("DutySlot")
+    location:      Mapped["DutyLocation"] = relationship("DutyLocation")
+
+    __table_args__ = (
+        # Same teacher can't be in two places at the same time on the same day
+        UniqueConstraint("tenant_id", "teacher_id", "duty_slot_id", "day_of_week", "week_start",
+                         name="uq_teacher_duty_slot_day"),
+        # Same location+slot+day can only have one teacher
+        UniqueConstraint("tenant_id", "location_id", "duty_slot_id", "day_of_week", "week_start",
+                         name="uq_location_duty_slot_day"),
+        CheckConstraint("day_of_week BETWEEN 0 AND 4", name="valid_duty_day"),
+    )

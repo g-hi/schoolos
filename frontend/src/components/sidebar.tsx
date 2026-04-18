@@ -7,6 +7,7 @@ const nav = [
   { href: "/", label: "Dashboard", icon: "📊" },
   { href: "/timetable", label: "Timetable", icon: "📅" },
   { href: "/substitution", label: "Substitution", icon: "🔄" },
+  { href: "/duties", label: "Duty Schedule", icon: "🛡️" },
   { href: "/communication", label: "Communication", icon: "💬" },
   { href: "/pickup", label: "Pickup", icon: "🚗" },
   { href: "/data", label: "Data Upload", icon: "📁" },

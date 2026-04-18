@@ -32,6 +32,7 @@ from shared.db.models import (
     DutyAssignment,
     DutyLocation,
     DutySlot,
+    DutySlotLocation,
     Teacher,
     Tenant,
     TimetableEntry,
@@ -55,6 +56,10 @@ class SlotCreate(BaseModel):
     name: str           # e.g. "Morning Arrival", "Break", "Lunch", "Closing"
     start_time: str     # "07:30"
     end_time: str       # "08:00"
+
+class SlotLocationAdd(BaseModel):
+    name: str                    # location name — created if it doesn't exist
+    description: str | None = None
 
 class GenerateRequest(BaseModel):
     academic_year: str = "2025-2026"
@@ -152,6 +157,151 @@ async def list_slots(
 
 
 # ─────────────────────────────────────────────────────────────────────────────
+# POST /duties/slots/{slot_id}/locations — link a location to a slot
+# ─────────────────────────────────────────────────────────────────────────────
+
+@router.post("/slots/{slot_id}/locations", summary="Add a location to a duty slot")
+async def add_slot_location(
+    slot_id: str,
+    body: SlotLocationAdd,
+    tenant: Tenant = Depends(resolve_tenant),
+    db: AsyncSession = Depends(get_db),
+):
+    """Link a location to a duty slot. Creates the location if it doesn't exist."""
+    await set_tenant_context(db, tenant.id)
+
+    # Verify slot exists
+    slot_q = await db.execute(
+        select(DutySlot).where(DutySlot.id == slot_id, DutySlot.tenant_id == tenant.id)
+    )
+    slot = slot_q.scalar_one_or_none()
+    if not slot:
+        raise HTTPException(status_code=404, detail="Duty slot not found")
+
+    # Find or create location by name
+    loc_q = await db.execute(
+        select(DutyLocation).where(
+            DutyLocation.tenant_id == tenant.id,
+            func.lower(DutyLocation.name) == body.name.strip().lower(),
+        )
+    )
+    location = loc_q.scalar_one_or_none()
+    if not location:
+        location = DutyLocation(
+            id=uuid.uuid4(),
+            tenant_id=tenant.id,
+            name=body.name.strip(),
+            description=body.description,
+        )
+        db.add(location)
+        await db.flush()
+
+    # Check if already linked
+    existing = await db.execute(
+        select(DutySlotLocation).where(
+            DutySlotLocation.tenant_id == tenant.id,
+            DutySlotLocation.slot_id == slot.id,
+            DutySlotLocation.location_id == location.id,
+        )
+    )
+    if existing.scalar_one_or_none():
+        raise HTTPException(status_code=409, detail="Location already linked to this slot")
+
+    link = DutySlotLocation(
+        id=uuid.uuid4(),
+        tenant_id=tenant.id,
+        slot_id=slot.id,
+        location_id=location.id,
+    )
+    db.add(link)
+    await db.commit()
+
+    return {
+        "id": str(link.id),
+        "slot_id": str(slot.id),
+        "location_id": str(location.id),
+        "location_name": location.name,
+    }
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# DELETE /duties/slots/{slot_id}/locations/{location_id}
+# ─────────────────────────────────────────────────────────────────────────────
+
+@router.delete("/slots/{slot_id}/locations/{location_id}", summary="Remove a location from a slot")
+async def remove_slot_location(
+    slot_id: str,
+    location_id: str,
+    tenant: Tenant = Depends(resolve_tenant),
+    db: AsyncSession = Depends(get_db),
+):
+    await set_tenant_context(db, tenant.id)
+
+    result = await db.execute(
+        sa_delete(DutySlotLocation).where(
+            DutySlotLocation.tenant_id == tenant.id,
+            DutySlotLocation.slot_id == slot_id,
+            DutySlotLocation.location_id == location_id,
+        )
+    )
+    await db.commit()
+    if result.rowcount == 0:
+        raise HTTPException(status_code=404, detail="Link not found")
+    return {"deleted": True}
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# GET /duties/slots-config — slots with their locations
+# ─────────────────────────────────────────────────────────────────────────────
+
+@router.get("/slots-config", summary="Get all slots with their linked locations")
+async def get_slots_config(
+    tenant: Tenant = Depends(resolve_tenant),
+    db: AsyncSession = Depends(get_db),
+):
+    await set_tenant_context(db, tenant.id)
+
+    q = await db.execute(
+        select(DutySlotLocation)
+        .where(DutySlotLocation.tenant_id == tenant.id)
+        .options(
+            selectinload(DutySlotLocation.slot),
+            selectinload(DutySlotLocation.location),
+        )
+    )
+    links = q.scalars().all()
+
+    # Also load slots with no locations yet
+    slots_q = await db.execute(
+        select(DutySlot)
+        .where(DutySlot.tenant_id == tenant.id, DutySlot.is_active.is_(True))
+        .order_by(DutySlot.start_time)
+    )
+    all_slots = slots_q.scalars().all()
+
+    # Build slot -> locations map
+    slot_map: dict[str, dict] = {}
+    for s in all_slots:
+        slot_map[str(s.id)] = {
+            "id": str(s.id),
+            "name": s.name,
+            "start_time": s.start_time,
+            "end_time": s.end_time,
+            "locations": [],
+        }
+    for link in links:
+        sid = str(link.slot_id)
+        if sid in slot_map:
+            slot_map[sid]["locations"].append({
+                "id": str(link.location.id),
+                "name": link.location.name,
+                "description": link.location.description,
+            })
+
+    return list(slot_map.values())
+
+
+# ─────────────────────────────────────────────────────────────────────────────
 # POST /duties/generate — auto-assign teachers for a week
 # ─────────────────────────────────────────────────────────────────────────────
 
@@ -173,25 +323,22 @@ async def generate_duties(
 
     await set_tenant_context(db, tenant.id)
 
-    # Load duty slots and locations
-    slots_q = await db.execute(
-        select(DutySlot)
-        .where(DutySlot.tenant_id == tenant.id, DutySlot.is_active.is_(True))
-        .order_by(DutySlot.start_time)
+    # Load slot-location mappings (which locations need coverage during which slot)
+    sl_q = await db.execute(
+        select(DutySlotLocation)
+        .where(DutySlotLocation.tenant_id == tenant.id)
+        .options(
+            selectinload(DutySlotLocation.slot),
+            selectinload(DutySlotLocation.location),
+        )
     )
-    duty_slots = slots_q.scalars().all()
+    slot_locations = sl_q.scalars().all()
 
-    locs_q = await db.execute(
-        select(DutyLocation)
-        .where(DutyLocation.tenant_id == tenant.id, DutyLocation.is_active.is_(True))
-        .order_by(DutyLocation.name)
-    )
-    locations = locs_q.scalars().all()
-
-    if not duty_slots:
-        raise HTTPException(status_code=400, detail="No duty slots configured. Add duty slots first.")
-    if not locations:
-        raise HTTPException(status_code=400, detail="No duty locations configured. Add locations first.")
+    if not slot_locations:
+        raise HTTPException(
+            status_code=400,
+            detail="No slot-location mappings configured. Add locations to your duty slots first.",
+        )
 
     # Load all teachers
     teachers_q = await db.execute(
@@ -234,84 +381,86 @@ async def generate_duties(
     duty_count: dict[uuid.UUID, int] = {}  # track total duties for fairness
 
     for day_idx in range(5):  # Mon-Fri
-        for duty_slot in duty_slots:
-            for location in locations:
-                # Build candidate list: check who is free during this duty slot
-                candidates = []
-                for teacher in all_teachers:
-                    name = teacher.user.name if teacher.user else f"Teacher-{teacher.id}"
-                    max_h = teacher.max_weekly_hours or 20
+        for sl in slot_locations:
+            duty_slot = sl.slot
+            location = sl.location
 
-                    # Check if teacher is teaching during this duty slot on this day
-                    periods_today = teacher_schedule.get((teacher.id, day_idx), [])
-                    is_free = not _times_overlap(
-                        duty_slot.start_time, duty_slot.end_time, periods_today
-                    )
+            # Build candidate list: check who is free during this duty slot
+            candidates = []
+            for teacher in all_teachers:
+                name = teacher.user.name if teacher.user else f"Teacher-{teacher.id}"
+                max_h = teacher.max_weekly_hours or 20
 
-                    weekly_periods = teacher_weekly_periods.get(teacher.id, 0)
-                    duties = duty_count.get(teacher.id, 0)
-
-                    candidates.append({
-                        "name": name,
-                        "is_free": is_free,
-                        "weekly_periods": weekly_periods,
-                        "max_weekly_hours": max_h,
-                        "duties_this_week": duties,
-                    })
-
-                duty_info = {
-                    "slot_name": duty_slot.name,
-                    "start_time": duty_slot.start_time,
-                    "end_time": duty_slot.end_time,
-                    "location": location.name,
-                    "day": DAY_NAMES[day_idx],
-                }
-
-                llm_result = await pick_duty_teacher(
-                    duty=duty_info,
-                    candidates=candidates,
+                # Check if teacher is teaching during this duty slot on this day
+                periods_today = teacher_schedule.get((teacher.id, day_idx), [])
+                is_free = not _times_overlap(
+                    duty_slot.start_time, duty_slot.end_time, periods_today
                 )
 
-                chosen_name = llm_result.get("chosen")
-                reasoning = llm_result.get("reasoning", "")
-                chosen_teacher = None
+                weekly_periods = teacher_weekly_periods.get(teacher.id, 0)
+                duties = duty_count.get(teacher.id, 0)
 
-                if chosen_name:
-                    # Map name back to Teacher
+                candidates.append({
+                    "name": name,
+                    "is_free": is_free,
+                    "weekly_periods": weekly_periods,
+                    "max_weekly_hours": max_h,
+                    "duties_this_week": duties,
+                })
+
+            duty_info = {
+                "slot_name": duty_slot.name,
+                "start_time": duty_slot.start_time,
+                "end_time": duty_slot.end_time,
+                "location": location.name,
+                "day": DAY_NAMES[day_idx],
+            }
+
+            llm_result = await pick_duty_teacher(
+                duty=duty_info,
+                candidates=candidates,
+            )
+
+            chosen_name = llm_result.get("chosen")
+            reasoning = llm_result.get("reasoning", "")
+            chosen_teacher = None
+
+            if chosen_name:
+                # Map name back to Teacher
+                for t in all_teachers:
+                    t_name = t.user.name if t.user else ""
+                    if t_name.lower() == chosen_name.lower():
+                        chosen_teacher = t
+                        break
+                # Fuzzy fallback
+                if not chosen_teacher:
                     for t in all_teachers:
                         t_name = t.user.name if t.user else ""
-                        if t_name.lower() == chosen_name.lower():
+                        if chosen_name.lower() in t_name.lower() or t_name.lower() in chosen_name.lower():
                             chosen_teacher = t
                             break
-                    # Fuzzy fallback
-                    if not chosen_teacher:
-                        for t in all_teachers:
-                            t_name = t.user.name if t.user else ""
-                            if chosen_name.lower() in t_name.lower() or t_name.lower() in chosen_name.lower():
-                                chosen_teacher = t
-                                break
 
-                if chosen_teacher:
-                    assignment = DutyAssignment(
-                        id=uuid.uuid4(),
-                        tenant_id=tenant.id,
-                        teacher_id=chosen_teacher.id,
-                        duty_slot_id=duty_slot.id,
-                        location_id=location.id,
-                        day_of_week=day_idx,
-                        academic_year=body.academic_year,
-                        ai_reasoning=reasoning,
-                    )
-                    db.add(assignment)
-                    duty_count[chosen_teacher.id] = duty_count.get(chosen_teacher.id, 0) + 1
+            if chosen_teacher:
+                assignment = DutyAssignment(
+                    id=uuid.uuid4(),
+                    tenant_id=tenant.id,
+                    teacher_id=chosen_teacher.id,
+                    duty_slot_id=duty_slot.id,
+                    location_id=location.id,
+                    day_of_week=day_idx,
+                    academic_year=body.academic_year,
+                    ai_reasoning=reasoning,
+                )
+                db.add(assignment)
+                duty_count[chosen_teacher.id] = duty_count.get(chosen_teacher.id, 0) + 1
 
-                results.append({
-                    "day": DAY_NAMES[day_idx],
-                    "slot": duty_slot.name,
-                    "location": location.name,
-                    "teacher": (chosen_teacher.user.name if chosen_teacher and chosen_teacher.user else None),
-                    "reasoning": reasoning,
-                })
+            results.append({
+                "day": DAY_NAMES[day_idx],
+                "slot": duty_slot.name,
+                "location": location.name,
+                "teacher": (chosen_teacher.user.name if chosen_teacher and chosen_teacher.user else None),
+                "reasoning": reasoning,
+            })
 
     await db.commit()
 

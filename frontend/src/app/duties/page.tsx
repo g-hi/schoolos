@@ -1,22 +1,23 @@
 "use client";
 
-import { useState, useEffect } from "react";
+import { useState, useEffect, useCallback } from "react";
 import { api, apiPost } from "@/lib/api";
 
 const API_BASE = process.env.NEXT_PUBLIC_API_URL || "https://schoolos-gateway.onrender.com";
 const TENANT = process.env.NEXT_PUBLIC_TENANT_SLUG || "greenwood";
 const DAY_NAMES = ["Monday", "Tuesday", "Wednesday", "Thursday", "Friday"];
 
-interface Location {
+interface SlotLocation {
   id: string;
   name: string;
   description: string | null;
 }
-interface Slot {
+interface SlotConfig {
   id: string;
   name: string;
   start_time: string;
   end_time: string;
+  locations: SlotLocation[];
 }
 interface Assignment {
   id: string;
@@ -33,13 +34,12 @@ export default function DutyPage() {
   const [tab, setTab] = useState<"roster" | "setup">("roster");
 
   // Setup state
-  const [locations, setLocations] = useState<Location[]>([]);
-  const [slots, setSlots] = useState<Slot[]>([]);
-  const [newLocName, setNewLocName] = useState("");
-  const [newLocDesc, setNewLocDesc] = useState("");
+  const [slotConfigs, setSlotConfigs] = useState<SlotConfig[]>([]);
   const [newSlotName, setNewSlotName] = useState("");
   const [newSlotStart, setNewSlotStart] = useState("");
   const [newSlotEnd, setNewSlotEnd] = useState("");
+  // Per-slot new-location input: slotId -> text
+  const [locInputs, setLocInputs] = useState<Record<string, string>>({});
 
   // Roster state
   const [academicYear] = useState("2025-2026");
@@ -47,11 +47,12 @@ export default function DutyPage() {
   const [generating, setGenerating] = useState(false);
   const [loading, setLoading] = useState(false);
 
-  // Load setup data
-  useEffect(() => {
-    api<Location[]>("/duties/locations").then(setLocations).catch(() => {});
-    api<Slot[]>("/duties/slots").then(setSlots).catch(() => {});
+  // Load slot-location config
+  const loadConfig = useCallback(() => {
+    api<SlotConfig[]>("/duties/slots-config").then(setSlotConfigs).catch(() => {});
   }, []);
+
+  useEffect(() => { loadConfig(); }, [loadConfig]);
 
   // Load assignments on mount
   useEffect(() => {
@@ -62,28 +63,34 @@ export default function DutyPage() {
       .finally(() => setLoading(false));
   }, [academicYear]);
 
-  const addLocation = async () => {
-    if (!newLocName.trim()) return;
-    const loc = await apiPost<Location>("/duties/locations", {
-      name: newLocName.trim(),
-      description: newLocDesc.trim() || null,
-    });
-    setLocations((prev) => [...prev, loc]);
-    setNewLocName("");
-    setNewLocDesc("");
-  };
-
   const addSlot = async () => {
     if (!newSlotName.trim() || !newSlotStart || !newSlotEnd) return;
-    const slot = await apiPost<Slot>("/duties/slots", {
+    await apiPost("/duties/slots", {
       name: newSlotName.trim(),
       start_time: newSlotStart,
       end_time: newSlotEnd,
     });
-    setSlots((prev) => [...prev, slot]);
     setNewSlotName("");
     setNewSlotStart("");
     setNewSlotEnd("");
+    loadConfig();
+  };
+
+  const addLocationToSlot = async (slotId: string) => {
+    const name = (locInputs[slotId] || "").trim();
+    if (!name) return;
+    try {
+      await apiPost(`/duties/slots/${slotId}/locations`, { name });
+      setLocInputs((prev) => ({ ...prev, [slotId]: "" }));
+      loadConfig();
+    } catch (e: unknown) {
+      alert((e as Error).message);
+    }
+  };
+
+  const removeLocationFromSlot = async (slotId: string, locationId: string) => {
+    await api(`/duties/slots/${slotId}/locations/${locationId}`, { method: "DELETE" });
+    loadConfig();
   };
 
   const generate = async () => {
@@ -123,20 +130,26 @@ export default function DutyPage() {
     URL.revokeObjectURL(url);
   };
 
-  // Build grid: slot -> day -> assignment
+  // Build grid: "slot|location" -> day -> assignment
   const grid: Record<string, Record<number, Assignment>> = {};
   for (const a of assignments) {
-    if (!grid[a.slot]) grid[a.slot] = {};
-    grid[a.slot][a.day_of_week] = a;
+    const key = `${a.slot}|${a.location}`;
+    if (!grid[key]) grid[key] = {};
+    grid[key][a.day_of_week] = a;
   }
 
-  const slotNames = [...new Set(assignments.map((a) => a.slot))];
-  // Order slot names by earliest time
-  slotNames.sort((a, b) => {
-    const aTime = assignments.find((x) => x.slot === a)?.slot_time || "";
-    const bTime = assignments.find((x) => x.slot === b)?.slot_time || "";
-    return aTime.localeCompare(bTime);
-  });
+  // Build row keys grouped by slot, ordered by time
+  const rowKeys: { key: string; slot: string; location: string; slotTime: string }[] = [];
+  const seen = new Set<string>();
+  // Sort assignments by slot time for ordering
+  const sorted = [...assignments].sort((a, b) => a.slot_time.localeCompare(b.slot_time));
+  for (const a of sorted) {
+    const key = `${a.slot}|${a.location}`;
+    if (!seen.has(key)) {
+      seen.add(key);
+      rowKeys.push({ key, slot: a.slot, location: a.location, slotTime: a.slot_time });
+    }
+  }
 
   return (
     <div className="max-w-7xl mx-auto space-y-6">
@@ -168,75 +181,30 @@ export default function DutyPage() {
 
       {/* ── SETUP TAB ─────────────────────────────────────────── */}
       {tab === "setup" && (
-        <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
-          {/* Locations */}
-          <div className="bg-white rounded-xl shadow-sm border p-6 space-y-4">
-            <h2 className="text-lg font-semibold text-gray-700">Duty Locations</h2>
-            <div className="space-y-2">
-              {locations.map((l) => (
-                <div key={l.id} className="flex items-center justify-between bg-gray-50 rounded-lg px-3 py-2">
-                  <div>
-                    <span className="font-medium text-sm">{l.name}</span>
-                    {l.description && <span className="text-xs text-gray-500 ml-2">{l.description}</span>}
-                  </div>
-                </div>
-              ))}
-              {locations.length === 0 && <p className="text-sm text-gray-400">No locations yet.</p>}
-            </div>
-            <div className="flex flex-col gap-2">
+        <div className="space-y-6">
+          {/* Add New Slot */}
+          <div className="bg-white rounded-xl shadow-sm border p-6 space-y-3">
+            <h2 className="text-lg font-semibold text-gray-700">Add Duty Time Slot</h2>
+            <div className="flex flex-wrap items-end gap-3">
               <input
-                placeholder="Location name (e.g. Main Gate)"
-                value={newLocName}
-                onChange={(e) => setNewLocName(e.target.value)}
-                className="border rounded-lg px-3 py-2 text-sm"
-              />
-              <input
-                placeholder="Description (optional)"
-                value={newLocDesc}
-                onChange={(e) => setNewLocDesc(e.target.value)}
-                className="border rounded-lg px-3 py-2 text-sm"
-              />
-              <button
-                onClick={addLocation}
-                disabled={!newLocName.trim()}
-                className="bg-indigo-600 text-white text-sm px-4 py-2 rounded-lg hover:bg-indigo-700 disabled:opacity-50"
-              >
-                Add Location
-              </button>
-            </div>
-          </div>
-
-          {/* Duty Slots */}
-          <div className="bg-white rounded-xl shadow-sm border p-6 space-y-4">
-            <h2 className="text-lg font-semibold text-gray-700">Duty Time Slots</h2>
-            <div className="space-y-2">
-              {slots.map((s) => (
-                <div key={s.id} className="flex items-center justify-between bg-gray-50 rounded-lg px-3 py-2">
-                  <span className="font-medium text-sm">{s.name}</span>
-                  <span className="text-xs text-gray-500">{s.start_time} – {s.end_time}</span>
-                </div>
-              ))}
-              {slots.length === 0 && <p className="text-sm text-gray-400">No duty slots yet.</p>}
-            </div>
-            <div className="flex flex-col gap-2">
-              <input
-                placeholder="Slot name (e.g. Morning Arrival)"
+                placeholder="Slot name (e.g. First Break)"
                 value={newSlotName}
                 onChange={(e) => setNewSlotName(e.target.value)}
-                className="border rounded-lg px-3 py-2 text-sm"
+                className="border rounded-lg px-3 py-2 text-sm flex-1 min-w-[180px]"
               />
               <div className="flex gap-2">
                 <input
                   type="time"
                   value={newSlotStart}
                   onChange={(e) => setNewSlotStart(e.target.value)}
-                  className="border rounded-lg px-3 py-2 text-sm flex-1"
+                  className="border rounded-lg px-3 py-2 text-sm"
                 />
+                <span className="self-center text-gray-400">–</span>
                 <input
                   type="time"
                   value={newSlotEnd}
                   onChange={(e) => setNewSlotEnd(e.target.value)}
-                  className="border rounded-lg px-3 py-2 text-sm flex-1"
+                  className="border rounded-lg px-3 py-2 text-sm"
                 />
               </div>
               <button
@@ -248,6 +216,66 @@ export default function DutyPage() {
               </button>
             </div>
           </div>
+
+          {/* Slot Cards with Locations */}
+          {slotConfigs.length === 0 && (
+            <p className="text-sm text-gray-400">No duty slots yet. Add one above to get started.</p>
+          )}
+
+          {slotConfigs.map((slot) => (
+            <div key={slot.id} className="bg-white rounded-xl shadow-sm border p-5 space-y-3">
+              <div className="flex items-center justify-between">
+                <div>
+                  <h3 className="font-semibold text-gray-800">{slot.name}</h3>
+                  <span className="text-xs text-gray-500">{slot.start_time} – {slot.end_time}</span>
+                </div>
+                <span className="text-xs bg-indigo-50 text-indigo-600 px-2 py-1 rounded-full">
+                  {slot.locations.length} location{slot.locations.length !== 1 ? "s" : ""}
+                </span>
+              </div>
+
+              {/* Location tags */}
+              <div className="flex flex-wrap gap-2">
+                {slot.locations.map((loc) => (
+                  <span
+                    key={loc.id}
+                    className="inline-flex items-center gap-1 bg-gray-100 text-gray-700 text-xs px-2.5 py-1 rounded-full"
+                  >
+                    {loc.name}
+                    <button
+                      onClick={() => removeLocationFromSlot(slot.id, loc.id)}
+                      className="text-gray-400 hover:text-red-500 ml-0.5"
+                      title="Remove"
+                    >
+                      ✕
+                    </button>
+                  </span>
+                ))}
+              </div>
+
+              {/* Add location input */}
+              <div className="flex gap-2">
+                <input
+                  placeholder="Type location name (e.g. Playground, Cafeteria)"
+                  value={locInputs[slot.id] || ""}
+                  onChange={(e) =>
+                    setLocInputs((prev) => ({ ...prev, [slot.id]: e.target.value }))
+                  }
+                  onKeyDown={(e) => {
+                    if (e.key === "Enter") addLocationToSlot(slot.id);
+                  }}
+                  className="border rounded-lg px-3 py-1.5 text-sm flex-1"
+                />
+                <button
+                  onClick={() => addLocationToSlot(slot.id)}
+                  disabled={!(locInputs[slot.id] || "").trim()}
+                  className="bg-gray-700 text-white text-xs px-3 py-1.5 rounded-lg hover:bg-gray-800 disabled:opacity-40"
+                >
+                  + Add
+                </button>
+              </div>
+            </div>
+          ))}
         </div>
       )}
 
@@ -261,7 +289,7 @@ export default function DutyPage() {
             </span>
             <button
               onClick={generate}
-              disabled={generating || slots.length === 0 || locations.length === 0}
+              disabled={generating || slotConfigs.every((s) => s.locations.length === 0)}
               className="bg-indigo-600 text-white text-sm px-4 py-2 rounded-lg hover:bg-indigo-700 disabled:opacity-50"
             >
               {generating ? "Generating…" : "Generate Roster"}
@@ -284,9 +312,9 @@ export default function DutyPage() {
             )}
           </div>
 
-          {(slots.length === 0 || locations.length === 0) && (
+          {slotConfigs.every((s) => s.locations.length === 0) && (
             <div className="bg-amber-50 border border-amber-200 rounded-lg p-4 text-sm text-amber-800">
-              Please add duty locations and time slots in the <b>Setup</b> tab before generating a roster.
+              Add duty slots and their locations in the <b>Setup</b> tab first. For each slot (e.g. First Break), type the locations that need coverage.
             </div>
           )}
 
@@ -298,43 +326,50 @@ export default function DutyPage() {
               <table className="min-w-full text-sm">
                 <thead>
                   <tr className="bg-indigo-50">
-                    <th className="px-4 py-3 text-left font-semibold text-indigo-700">Duty Slot</th>
+                    <th className="px-4 py-3 text-left font-semibold text-indigo-700">Slot / Location</th>
                     {DAY_NAMES.map((d) => (
                       <th key={d} className="px-4 py-3 text-center font-semibold text-indigo-700">{d}</th>
                     ))}
                   </tr>
                 </thead>
                 <tbody>
-                  {slotNames.map((slotName, i) => (
-                    <tr key={slotName} className={i % 2 === 0 ? "bg-white" : "bg-gray-50"}>
-                      <td className="px-4 py-3 font-medium text-gray-700 whitespace-nowrap">
-                        {slotName}
-                        <div className="text-xs text-gray-400">
-                          {assignments.find((a) => a.slot === slotName)?.slot_time}
-                        </div>
-                      </td>
-                      {[0, 1, 2, 3, 4].map((dayIdx) => {
-                        const a = grid[slotName]?.[dayIdx];
-                        return (
-                          <td key={dayIdx} className="px-4 py-3 text-center">
-                            {a && a.teacher ? (
-                              <div className="bg-indigo-50 rounded-lg px-2 py-1 inline-block">
-                                <div className="font-medium text-indigo-700 text-xs">{a.teacher}</div>
-                                <div className="text-[11px] text-gray-500">@ {a.location}</div>
-                              </div>
-                            ) : (
-                              <span className="text-gray-300">—</span>
-                            )}
+                  {rowKeys.map((row, i) => {
+                    // Show slot header row if this is the first location of a new slot
+                    const isFirstOfSlot = i === 0 || rowKeys[i - 1].slot !== row.slot;
+                    return (
+                      <>
+                        {isFirstOfSlot && (
+                          <tr key={`hdr-${row.slot}`} className="bg-indigo-50/50">
+                            <td colSpan={6} className="px-4 py-2 font-semibold text-indigo-700 text-xs">
+                              {row.slot} <span className="font-normal text-gray-400 ml-1">{row.slotTime}</span>
+                            </td>
+                          </tr>
+                        )}
+                        <tr key={row.key} className={i % 2 === 0 ? "bg-white" : "bg-gray-50"}>
+                          <td className="px-4 py-2 pl-8 text-gray-600 text-xs whitespace-nowrap">
+                            {row.location}
                           </td>
-                        );
-                      })}
-                    </tr>
-                  ))}
+                          {[0, 1, 2, 3, 4].map((dayIdx) => {
+                            const a = grid[row.key]?.[dayIdx];
+                            return (
+                              <td key={dayIdx} className="px-4 py-2 text-center">
+                                {a && a.teacher ? (
+                                  <span className="font-medium text-indigo-700 text-xs">{a.teacher}</span>
+                                ) : (
+                                  <span className="text-gray-300">—</span>
+                                )}
+                              </td>
+                            );
+                          })}
+                        </tr>
+                      </>
+                    );
+                  })}
                 </tbody>
               </table>
             </div>
           ) : (
-            <p className="text-sm text-gray-400">No duty assignments for this week. Click &quot;Generate Roster&quot; to create one.</p>
+            <p className="text-sm text-gray-400">No duty assignments yet. Click &quot;Generate Roster&quot; to create one.</p>
           )}
 
           {/* Summary */}

@@ -629,6 +629,33 @@ class DutySlot(Base):
 
 
 # ─────────────────────────────────────────────────────────────────────────────
+# DutySlotLocation  (which locations need coverage during which slot)
+# ─────────────────────────────────────────────────────────────────────────────
+
+class DutySlotLocation(Base):
+    """
+    Maps which locations need duty coverage during a specific duty slot.
+    E.g. "First Break" → [Playground, Cafeteria, Corridor A].
+    Admins configure this per-slot before generating the roster.
+    """
+    __tablename__ = "duty_slot_locations"
+
+    id:          Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    tenant_id:   Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), ForeignKey("tenants.id", ondelete="CASCADE"), nullable=False, index=True)
+    slot_id:     Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), ForeignKey("duty_slots.id", ondelete="CASCADE"), nullable=False)
+    location_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), ForeignKey("duty_locations.id", ondelete="CASCADE"), nullable=False)
+    created_at:  Mapped[datetime]  = mapped_column(DateTime(timezone=True), server_default=func.now())
+
+    # Relationships
+    slot:     Mapped["DutySlot"]     = relationship("DutySlot")
+    location: Mapped["DutyLocation"] = relationship("DutyLocation")
+
+    __table_args__ = (
+        UniqueConstraint("tenant_id", "slot_id", "location_id", name="uq_slot_location_per_tenant"),
+    )
+
+
+# ─────────────────────────────────────────────────────────────────────────────
 # DutyAssignment  (recurring weekly pattern for the term/year)
 # ─────────────────────────────────────────────────────────────────────────────
 

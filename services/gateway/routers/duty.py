@@ -313,17 +313,13 @@ async def generate_duties(
 ):
     """
     Generates a recurring weekly duty pattern for the academic year.
-    For each (day, duty_slot, location):
-      1. Check each teacher's timetable to see if they're free during that slot.
-      2. Count their assigned duties so far (for fairness).
-      3. Ask the LLM agent to pick the fairest teacher.
-      4. Save the DutyAssignment (recurring — no specific week).
+    Batches all slot-locations per day into ONE LLM call (5 calls total).
     """
-    from services.gateway.ai.duty_agent import pick_duty_teacher
+    from services.gateway.ai.duty_agent import pick_duty_teachers_batch
 
     await set_tenant_context(db, tenant.id)
 
-    # Load slot-location mappings (which locations need coverage during which slot)
+    # Load slot-location mappings
     sl_q = await db.execute(
         select(DutySlotLocation)
         .where(DutySlotLocation.tenant_id == tenant.id)
@@ -351,8 +347,7 @@ async def generate_duties(
     if not all_teachers:
         raise HTTPException(status_code=400, detail="No teachers found.")
 
-    # Pre-load timetable entries for the week to check teacher availability
-    # We need to know which teachers are teaching during each duty slot's time window
+    # Pre-load timetable entries
     timetable_q = await db.execute(
         select(TimetableEntry)
         .where(
@@ -377,76 +372,84 @@ async def generate_duties(
     for te in all_timetable:
         teacher_weekly_periods[te.teacher_id] = teacher_weekly_periods.get(te.teacher_id, 0) + 1
 
+    # Build name->teacher map for quick lookup
+    teacher_by_name: dict[str, object] = {}
+    for t in all_teachers:
+        name = t.user.name if t.user else f"Teacher-{t.id}"
+        teacher_by_name[name.lower()] = t
+
+    # Build slot/location lookup by name
+    slot_by_name: dict[str, object] = {}
+    loc_by_name: dict[str, object] = {}
+    for sl in slot_locations:
+        slot_by_name[sl.slot.name] = sl.slot
+        loc_by_name[sl.location.name] = sl.location
+
     results = []
-    duty_count: dict[uuid.UUID, int] = {}  # track total duties for fairness
+    duty_count: dict[uuid.UUID, int] = {}
 
     for day_idx in range(5):  # Mon-Fri
+        # Build duties list for this day
+        duties = []
         for sl in slot_locations:
-            duty_slot = sl.slot
-            location = sl.location
+            duties.append({
+                "slot_name": sl.slot.name,
+                "start_time": sl.slot.start_time,
+                "end_time": sl.slot.end_time,
+                "location": sl.location.name,
+            })
 
-            # Build candidate list: check who is free during this duty slot
-            candidates = []
-            for teacher in all_teachers:
-                name = teacher.user.name if teacher.user else f"Teacher-{teacher.id}"
-                max_h = teacher.max_weekly_hours or 20
+        # Build teacher profiles with busy slots for this day
+        teacher_profiles = []
+        for teacher in all_teachers:
+            name = teacher.user.name if teacher.user else f"Teacher-{teacher.id}"
+            periods_today = teacher_schedule.get((teacher.id, day_idx), [])
 
-                # Check if teacher is teaching during this duty slot on this day
-                periods_today = teacher_schedule.get((teacher.id, day_idx), [])
-                is_free = not _times_overlap(
-                    duty_slot.start_time, duty_slot.end_time, periods_today
-                )
+            busy_slots = []
+            for sl in slot_locations:
+                if _times_overlap(sl.slot.start_time, sl.slot.end_time, periods_today):
+                    if sl.slot.name not in busy_slots:
+                        busy_slots.append(sl.slot.name)
 
-                weekly_periods = teacher_weekly_periods.get(teacher.id, 0)
-                duties = duty_count.get(teacher.id, 0)
+            teacher_profiles.append({
+                "name": name,
+                "weekly_periods": teacher_weekly_periods.get(teacher.id, 0),
+                "max_weekly_hours": teacher.max_weekly_hours or 20,
+                "duties_so_far": duty_count.get(teacher.id, 0),
+                "busy_slots": busy_slots,
+            })
 
-                candidates.append({
-                    "name": name,
-                    "is_free": is_free,
-                    "weekly_periods": weekly_periods,
-                    "max_weekly_hours": max_h,
-                    "duties_this_week": duties,
-                })
+        # ONE LLM call for this entire day
+        day_results = await pick_duty_teachers_batch(
+            day=DAY_NAMES[day_idx],
+            duties=duties,
+            teachers=teacher_profiles,
+        )
 
-            duty_info = {
-                "slot_name": duty_slot.name,
-                "start_time": duty_slot.start_time,
-                "end_time": duty_slot.end_time,
-                "location": location.name,
-                "day": DAY_NAMES[day_idx],
-            }
-
-            llm_result = await pick_duty_teacher(
-                duty=duty_info,
-                candidates=candidates,
-            )
-
-            chosen_name = llm_result.get("chosen")
-            reasoning = llm_result.get("reasoning", "")
+        # Process results and save to DB
+        for r in day_results:
+            chosen_name = r.get("chosen")
+            reasoning = r.get("reasoning", "")
             chosen_teacher = None
 
             if chosen_name:
-                # Map name back to Teacher
-                for t in all_teachers:
-                    t_name = t.user.name if t.user else ""
-                    if t_name.lower() == chosen_name.lower():
-                        chosen_teacher = t
-                        break
-                # Fuzzy fallback
+                chosen_teacher = teacher_by_name.get(chosen_name.lower())
                 if not chosen_teacher:
-                    for t in all_teachers:
-                        t_name = t.user.name if t.user else ""
-                        if chosen_name.lower() in t_name.lower() or t_name.lower() in chosen_name.lower():
+                    for key, t in teacher_by_name.items():
+                        if chosen_name.lower() in key or key in chosen_name.lower():
                             chosen_teacher = t
                             break
 
-            if chosen_teacher:
+            slot_obj = slot_by_name.get(r.get("slot", ""))
+            loc_obj = loc_by_name.get(r.get("location", ""))
+
+            if chosen_teacher and slot_obj and loc_obj:
                 assignment = DutyAssignment(
                     id=uuid.uuid4(),
                     tenant_id=tenant.id,
                     teacher_id=chosen_teacher.id,
-                    duty_slot_id=duty_slot.id,
-                    location_id=location.id,
+                    duty_slot_id=slot_obj.id,
+                    location_id=loc_obj.id,
                     day_of_week=day_idx,
                     academic_year=body.academic_year,
                     ai_reasoning=reasoning,
@@ -456,15 +459,14 @@ async def generate_duties(
 
             results.append({
                 "day": DAY_NAMES[day_idx],
-                "slot": duty_slot.name,
-                "location": location.name,
+                "slot": r.get("slot", ""),
+                "location": r.get("location", ""),
                 "teacher": (chosen_teacher.user.name if chosen_teacher and chosen_teacher.user else None),
                 "reasoning": reasoning,
             })
 
     await db.commit()
 
-    # Audit
     await log_action(
         db=db,
         tenant_id=tenant.id,

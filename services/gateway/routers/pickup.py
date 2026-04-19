@@ -262,6 +262,22 @@ async def create_pickup_request(
 
     teacher = await _resolve_teacher_for_class(db, tenant.id, klass.id)
 
+    # --- Step-by-step agent flow ---
+    steps = [
+        {"step": "authenticate", "label": "Parent Authentication", "passed": True,
+         "detail": f"Verified: {parent.name} (phone matched)"},
+    ]
+
+    steps.append({
+        "step": "geofence",
+        "label": "Location Check",
+        "passed": inside,
+        "detail": f"{'Within' if inside else 'Outside'} school premises ({round(distance_m)}m, radius {radius_m}m)",
+    })
+
+    # Determine auto-approval
+    approved = inside  # auto-approve if parent is authenticated + inside geofence
+
     pickup = PickupRequest(
         id=uuid.uuid4(),
         tenant_id=tenant.id,
@@ -277,13 +293,18 @@ async def create_pickup_request(
         geofence_radius_m=radius_m,
         within_geofence=inside,
         early_pickup=early_pickup,
-        status="requested" if inside else "rejected_outside_geofence",
+        status="released" if approved else "rejected_outside_geofence",
         requested_at=request_dt,
+        released_at=datetime.utcnow() if approved else None,
         notes=None,
     )
     db.add(pickup)
 
-    if not inside:
+    if not approved:
+        steps.append({
+            "step": "approval", "label": "Approval", "passed": False,
+            "detail": "Denied — parent is not at school yet.",
+        })
         await send_to_user(
             parent,
             "It looks like you are not at school yet. Please send again when you arrive.",
@@ -305,39 +326,52 @@ async def create_pickup_request(
         return {
             "pickup_id": str(pickup.id),
             "status": pickup.status,
+            "student": student.name,
+            "parent": parent.name,
+            "class": f"{klass.grade} {klass.section}",
+            "approved": False,
+            "message": "Parent is outside the school geofence. Please try again when closer.",
             "distance_meters": round(distance_m, 1),
             "geofence_radius_m": radius_m,
-            "message": "Parent outside geofence.",
+            "steps": steps,
         }
 
-    # Notify teacher
+    # --- Auto-approved: notify teacher & parent ---
+    steps.append({
+        "step": "approval", "label": "Approval", "passed": True,
+        "detail": f"{student.name} may leave now.",
+    })
+
+    # Notify teacher that student is being released
     if teacher:
         teacher_user_q = await db.execute(select(User).where(User.id == teacher.user_id))
         teacher_user = teacher_user_q.scalar_one_or_none()
         if teacher_user:
             await send_to_user(
                 teacher_user,
-                f"[SchoolOS] Pickup alert: {student.name}'s parent has arrived. Please release the student.",
+                f"[SchoolOS] {student.name} ({klass.grade} {klass.section}) has been approved for pickup. "
+                f"Parent {parent.name} is at the school gate. Please send {student.name} to the pickup area.",
                 "pickup_teacher_alert",
                 db,
                 student_id=student.id,
-                email_subject=f"[SchoolOS] Pickup Alert - {student.name}",
+                email_subject=f"[SchoolOS] Release {student.name} for Pickup",
             )
 
     # Confirm to parent
     await send_to_user(
         parent,
-        f"[SchoolOS] Pickup request received for {student.name}. Please wait while the teacher releases the student.",
-        "pickup_parent_ack",
+        f"[SchoolOS] ✅ {student.name} may leave now. The teacher has been notified. "
+        f"Please wait at the pickup area.",
+        "pickup_approved",
         db,
         student_id=student.id,
-        email_subject=f"[SchoolOS] Pickup Received - {student.name}",
+        email_subject=f"[SchoolOS] {student.name} May Leave Now",
     )
 
     await log_action(
         db=db,
         tenant_id=tenant.id,
-        action="pickup.requested",
+        action="pickup.auto_approved",
         entity_type="PickupRequest",
         entity_id=pickup.id,
         actor_id=parent.id,
@@ -355,11 +389,15 @@ async def create_pickup_request(
         "pickup_id": str(pickup.id),
         "status": pickup.status,
         "student": student.name,
+        "parent": parent.name,
         "class": f"{klass.grade} {klass.section}",
+        "approved": True,
+        "message": f"{student.name} may leave now.",
         "teacher_notified": teacher is not None,
         "distance_meters": round(distance_m, 1),
         "geofence_radius_m": radius_m,
         "early_pickup": early_pickup,
+        "steps": steps,
     }
 
 

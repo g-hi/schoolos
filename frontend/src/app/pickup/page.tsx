@@ -18,13 +18,36 @@ interface PickupLog {
   notes: string | null;
 }
 
+interface AgentStep {
+  step: string;
+  label: string;
+  passed: boolean;
+  detail: string;
+}
+
+interface PickupResponse {
+  pickup_id: string;
+  status: string;
+  student: string;
+  parent: string;
+  class: string;
+  approved: boolean;
+  message: string;
+  teacher_notified?: boolean;
+  distance_meters: number;
+  geofence_radius_m: number;
+  early_pickup?: boolean;
+  steps: AgentStep[];
+}
+
 export default function PickupPage() {
   const [logs, setLogs] = useState<PickupLog[]>([]);
   const [parentPhone, setParentPhone] = useState("");
   const [commandText, setCommandText] = useState("Pick up my child");
   const [lat, setLat] = useState("24.7136");
   const [lng, setLng] = useState("46.6753");
-  const [result, setResult] = useState<{ ok: boolean; text: string } | null>(null);
+  const [result, setResult] = useState<PickupResponse | null>(null);
+  const [error, setError] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
 
   useEffect(() => {
@@ -43,24 +66,18 @@ export default function PickupPage() {
   async function requestPickup() {
     setLoading(true);
     setResult(null);
+    setError(null);
     try {
-      const res = await apiPost<{ pickup_id: string; status: string; student?: string; distance_meters?: number; message?: string }>(
-        "/pickup/request",
-        {
-          parent_phone: parentPhone,
-          command_text: commandText,
-          latitude: parseFloat(lat),
-          longitude: parseFloat(lng),
-        },
-      );
-      if (res.status === "rejected") {
-        setResult({ ok: false, text: `Rejected — ${res.message || "outside geofence"} (${res.distance_meters?.toFixed(0)}m away)` });
-      } else {
-        setResult({ ok: true, text: `Pickup queued for ${res.student || "student"} — ${res.status}` });
-      }
+      const res = await apiPost<PickupResponse>("/pickup/request", {
+        parent_phone: parentPhone,
+        command_text: commandText,
+        latitude: parseFloat(lat),
+        longitude: parseFloat(lng),
+      });
+      setResult(res);
       loadLogs();
     } catch (err) {
-      setResult({ ok: false, text: `Error: ${err}` });
+      setError(`${err}`);
     } finally {
       setLoading(false);
     }
@@ -68,8 +85,10 @@ export default function PickupPage() {
 
   const statusColor: Record<string, string> = {
     pending: "bg-amber-100 text-amber-700",
+    requested: "bg-amber-100 text-amber-700",
     released: "bg-green-100 text-green-700",
     rejected: "bg-red-100 text-red-700",
+    rejected_outside_geofence: "bg-red-100 text-red-700",
     queued: "bg-blue-100 text-blue-700",
   };
 
@@ -79,7 +98,7 @@ export default function PickupPage() {
 
       {/* Request Form */}
       <div className="bg-white rounded-xl border border-gray-200 p-6">
-        <h2 className="font-semibold mb-4">Request Pickup</h2>
+        <h2 className="font-semibold mb-4">Parent Pickup Request</h2>
         <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4 mb-4">
           <div>
             <label className="block text-sm font-medium text-gray-700 mb-1">Parent Phone</label>
@@ -125,14 +144,53 @@ export default function PickupPage() {
           disabled={loading || !parentPhone}
           className="px-4 py-2 bg-indigo-600 text-white rounded-lg text-sm font-medium hover:bg-indigo-700 disabled:opacity-50"
         >
-          {loading ? "Requesting..." : "Request Pickup"}
+          {loading ? "Processing..." : "Send Pickup Request"}
         </button>
-        {result && (
-          <div className={`mt-4 rounded-lg p-3 text-sm ${result.ok ? "bg-green-50 border border-green-200 text-green-700" : "bg-red-50 border border-red-200 text-red-700"}`}>
-            {result.text}
-          </div>
-        )}
       </div>
+
+      {/* Agent Response */}
+      {error && (
+        <div className="bg-red-50 border border-red-200 rounded-xl p-4 text-sm text-red-700">{error}</div>
+      )}
+
+      {result && (
+        <div className={`rounded-xl border-2 p-6 ${result.approved ? "border-green-300 bg-green-50" : "border-red-300 bg-red-50"}`}>
+          {/* Step-by-step agent flow */}
+          <div className="space-y-3 mb-5">
+            {result.steps.map((s, i) => (
+              <div key={i} className="flex items-start gap-3">
+                <div className={`flex-shrink-0 w-7 h-7 rounded-full flex items-center justify-center text-sm font-bold ${
+                  s.passed ? "bg-green-500 text-white" : "bg-red-500 text-white"
+                }`}>
+                  {s.passed ? "✓" : "✗"}
+                </div>
+                <div>
+                  <div className="text-sm font-semibold text-gray-800">{s.label}</div>
+                  <div className="text-sm text-gray-600">{s.detail}</div>
+                </div>
+              </div>
+            ))}
+          </div>
+
+          {/* Big result message */}
+          <div className={`rounded-lg p-5 text-center ${result.approved ? "bg-green-100" : "bg-red-100"}`}>
+            <div className={`text-2xl font-bold mb-1 ${result.approved ? "text-green-800" : "text-red-800"}`}>
+              {result.message}
+            </div>
+            <div className="text-sm text-gray-600">
+              {result.student} &middot; {result.class} &middot; Parent: {result.parent}
+            </div>
+            {result.early_pickup && (
+              <div className="mt-2 inline-block px-3 py-1 bg-amber-100 text-amber-700 rounded-full text-xs font-medium">
+                ⚠ Early Pickup
+              </div>
+            )}
+            {result.approved && result.teacher_notified && (
+              <div className="mt-2 text-xs text-green-600">Teacher has been notified</div>
+            )}
+          </div>
+        </div>
+      )}
 
       {/* Pickup Log */}
       <div className="bg-white rounded-xl border border-gray-200 p-6">
@@ -164,12 +222,12 @@ export default function PickupPage() {
                     <td className="px-4 py-3 text-gray-500">{l.class}</td>
                     <td className="px-4 py-3">
                       <span className={`px-2 py-1 rounded text-xs font-medium ${statusColor[l.status] || "bg-gray-100"}`}>
-                        {l.status}
+                        {l.status === "rejected_outside_geofence" ? "rejected" : l.status}
                       </span>
                     </td>
                     <td className="px-4 py-3">
                       {l.within_geofence ? (
-                        <span className="text-green-600 text-xs">✓ Inside</span>
+                        <span className="text-green-600 text-xs font-medium">✓ Inside</span>
                       ) : (
                         <span className="text-red-600 text-xs">✗ {l.distance_meters?.toFixed(0)}m away</span>
                       )}

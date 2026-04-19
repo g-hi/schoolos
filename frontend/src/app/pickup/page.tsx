@@ -42,42 +42,31 @@ interface PickupResponse {
 
 export default function PickupPage() {
   const [logs, setLogs] = useState<PickupLog[]>([]);
-  const [parentPhone, setParentPhone] = useState("");
-  const [commandText, setCommandText] = useState("Pick up my child");
-  const [lat, setLat] = useState("24.7136");
-  const [lng, setLng] = useState("46.6753");
-  const [result, setResult] = useState<PickupResponse | null>(null);
-  const [error, setError] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
+  const [dateFrom, setDateFrom] = useState("");
+  const [dateTo, setDateTo] = useState("");
+  const [grade, setGrade] = useState("");
+  const [section, setSection] = useState("");
+  const [earlyOnly, setEarlyOnly] = useState(false);
 
   useEffect(() => {
     loadLogs();
+    // eslint-disable-next-line
   }, []);
 
   async function loadLogs() {
+    setLoading(true);
     try {
-      const data = await api<PickupLog[]>("/pickup/log");
+      const params: Record<string, string> = { limit: "100" };
+      if (dateFrom) params.start_date = dateFrom;
+      if (dateTo) params.end_date = dateTo;
+      if (grade) params.grade = grade;
+      if (section) params.section = section;
+      if (earlyOnly) params.early_only = "true";
+      const data = await api<PickupLog[]>("/pickup/log", { params });
       setLogs(data);
     } catch (err) {
       console.error(err);
-    }
-  }
-
-  async function requestPickup() {
-    setLoading(true);
-    setResult(null);
-    setError(null);
-    try {
-      const res = await apiPost<PickupResponse>("/pickup/request", {
-        parent_phone: parentPhone,
-        command_text: commandText,
-        latitude: parseFloat(lat),
-        longitude: parseFloat(lng),
-      });
-      setResult(res);
-      loadLogs();
-    } catch (err) {
-      setError(`${err}`);
     } finally {
       setLoading(false);
     }
@@ -92,105 +81,68 @@ export default function PickupPage() {
     queued: "bg-blue-100 text-blue-700",
   };
 
+
   return (
     <div className="max-w-7xl mx-auto space-y-6">
-      <h1 className="text-2xl font-bold">Private Car Pickup</h1>
+      <h1 className="text-2xl font-bold">Pickup Requests (Admin)</h1>
 
-      {/* Request Form */}
-      <div className="bg-white rounded-xl border border-gray-200 p-6">
-        <h2 className="font-semibold mb-4">Parent Pickup Request</h2>
-        <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4 mb-4">
-          <div>
-            <label className="block text-sm font-medium text-gray-700 mb-1">Parent Phone</label>
-            <input
-              type="text"
-              value={parentPhone}
-              onChange={(e) => setParentPhone(e.target.value)}
-              className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm"
-              placeholder="+971501234567"
-            />
-          </div>
-          <div>
-            <label className="block text-sm font-medium text-gray-700 mb-1">Message</label>
-            <input
-              type="text"
-              value={commandText}
-              onChange={(e) => setCommandText(e.target.value)}
-              className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm"
-              placeholder="Pick up my child"
-            />
-          </div>
-          <div>
-            <label className="block text-sm font-medium text-gray-700 mb-1">Latitude</label>
-            <input
-              type="text"
-              value={lat}
-              onChange={(e) => setLat(e.target.value)}
-              className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm"
-            />
-          </div>
-          <div>
-            <label className="block text-sm font-medium text-gray-700 mb-1">Longitude</label>
-            <input
-              type="text"
-              value={lng}
-              onChange={(e) => setLng(e.target.value)}
-              className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm"
-            />
-          </div>
+      {/* Filters */}
+      <div className="bg-white rounded-xl border border-gray-200 p-4 flex flex-wrap gap-4 items-end">
+        <div>
+          <label className="block text-sm font-medium text-gray-700 mb-1">From</label>
+          <input
+            type="date"
+            value={dateFrom}
+            onChange={(e) => setDateFrom(e.target.value)}
+            className="border border-gray-300 rounded-lg px-3 py-2 text-sm"
+          />
+        </div>
+        <div>
+          <label className="block text-sm font-medium text-gray-700 mb-1">To</label>
+          <input
+            type="date"
+            value={dateTo}
+            onChange={(e) => setDateTo(e.target.value)}
+            className="border border-gray-300 rounded-lg px-3 py-2 text-sm"
+          />
+        </div>
+        <div>
+          <label className="block text-sm font-medium text-gray-700 mb-1">Grade</label>
+          <input
+            type="text"
+            value={grade}
+            onChange={(e) => setGrade(e.target.value)}
+            className="border border-gray-300 rounded-lg px-3 py-2 text-sm"
+            placeholder="e.g. 3"
+          />
+        </div>
+        <div>
+          <label className="block text-sm font-medium text-gray-700 mb-1">Section</label>
+          <input
+            type="text"
+            value={section}
+            onChange={(e) => setSection(e.target.value)}
+            className="border border-gray-300 rounded-lg px-3 py-2 text-sm"
+            placeholder="e.g. B"
+          />
+        </div>
+        <div className="flex items-center gap-2">
+          <input
+            type="checkbox"
+            checked={earlyOnly}
+            onChange={(e) => setEarlyOnly(e.target.checked)}
+            id="earlyOnly"
+            className="mr-1"
+          />
+          <label htmlFor="earlyOnly" className="text-sm text-gray-700">Early Only</label>
         </div>
         <button
-          onClick={requestPickup}
-          disabled={loading || !parentPhone}
-          className="px-4 py-2 bg-indigo-600 text-white rounded-lg text-sm font-medium hover:bg-indigo-700 disabled:opacity-50"
+          onClick={loadLogs}
+          className="px-4 py-2 bg-indigo-600 text-white rounded-lg text-sm font-medium hover:bg-indigo-700"
         >
-          {loading ? "Processing..." : "Send Pickup Request"}
+          Search
         </button>
       </div>
-
-      {/* Agent Response */}
-      {error && (
-        <div className="bg-red-50 border border-red-200 rounded-xl p-4 text-sm text-red-700">{error}</div>
-      )}
-
-      {result && (
-        <div className={`rounded-xl border-2 p-6 ${result.approved ? "border-green-300 bg-green-50" : "border-red-300 bg-red-50"}`}>
-          {/* Step-by-step agent flow */}
-          <div className="space-y-3 mb-5">
-            {result.steps.map((s, i) => (
-              <div key={i} className="flex items-start gap-3">
-                <div className={`flex-shrink-0 w-7 h-7 rounded-full flex items-center justify-center text-sm font-bold ${
-                  s.passed ? "bg-green-500 text-white" : "bg-red-500 text-white"
-                }`}>
-                  {s.passed ? "✓" : "✗"}
-                </div>
-                <div>
-                  <div className="text-sm font-semibold text-gray-800">{s.label}</div>
-                  <div className="text-sm text-gray-600">{s.detail}</div>
-                </div>
-              </div>
-            ))}
-          </div>
-
-          {/* Big result message */}
-          <div className={`rounded-lg p-5 text-center ${result.approved ? "bg-green-100" : "bg-red-100"}`}>
-            <div className={`text-2xl font-bold mb-1 ${result.approved ? "text-green-800" : "text-red-800"}`}>
-              {result.message}
-            </div>
-            <div className="text-sm text-gray-600">
-              {result.student} &middot; {result.class} &middot; Parent: {result.parent}
-            </div>
-            {result.early_pickup && (
-              <div className="mt-2 inline-block px-3 py-1 bg-amber-100 text-amber-700 rounded-full text-xs font-medium">
-                ⚠ Early Pickup
-              </div>
-            )}
-            {result.approved && result.teacher_notified && (
-              <div className="mt-2 text-xs text-green-600">Teacher has been notified</div>
-            )}
-          </div>
-        </div>
-      )}
 
       {/* Pickup Log */}
       <div className="bg-white rounded-xl border border-gray-200 p-6">
@@ -198,8 +150,10 @@ export default function PickupPage() {
           <h2 className="font-semibold">Pickup Log</h2>
           <button onClick={loadLogs} className="text-sm text-indigo-600 hover:underline">Refresh</button>
         </div>
-        {logs.length === 0 ? (
-          <p className="text-gray-500 text-sm py-8 text-center">No pickup requests yet.</p>
+        {loading ? (
+          <div className="py-12 text-center text-gray-500">Loading...</div>
+        ) : logs.length === 0 ? (
+          <p className="text-gray-500 text-sm py-8 text-center">No pickup requests found.</p>
         ) : (
           <div className="overflow-x-auto">
             <table className="w-full text-sm">

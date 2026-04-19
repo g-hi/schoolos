@@ -1,39 +1,24 @@
 """
 Phase 4 - Communication Router
 ================================
-Handles all outbound parent notifications.
+Handles all outbound parent notifications and agent-driven communication.
 
 Endpoints
 ---------
 POST /communication/daily-digest   – send tomorrow's timetable to all parents
 POST /communication/broadcast      – admin sends a custom message (holiday, trip, etc.)
 GET  /communication/log            – view message history
-
-HOW DAILY DIGEST WORKS
-───────────────────────
-1. Admin calls POST /communication/daily-digest with a target_date.
-2. System resolves the day_of_week for that date.
-3. Fetches every class's timetable for that day (ordered by period sort_order).
-4. For each student, builds a personalised schedule message.
-5. Looks up the student's parents via StudentParent.
-6. Sends each parent a message via their preferred_channel (WhatsApp/SMS/email).
-7. Saves every attempt to the messages table.
-
-HOW BROADCAST WORKS
-────────────────────
-1. Admin calls POST /communication/broadcast with message text + optional filter.
-2. Filter options: all parents | by grade | by class (grade + section).
-3. System resolves which parent Users to notify.
-4. Fan-out send via messenger.send_to_users().
-5. Returns count of sent / failed / skipped.
+GET  /communication/stats          – message stats by type and channel
+GET  /communication/grades         – list available grades for broadcast filtering
+GET  /communication/agents         – list autonomous agent definitions and their status
 """
 
 import uuid
-from datetime import date as date_type
+from datetime import date as date_type, datetime
 
 from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel
-from sqlalchemy import select
+from sqlalchemy import func, select
 from sqlalchemy.orm import selectinload
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -65,9 +50,11 @@ class DailyDigestRequest(BaseModel):
 
 
 class BroadcastRequest(BaseModel):
-    message: str              # the text to send
-    grade: str | None = None  # filter to a specific grade, e.g. "Grade 1"
-    section: str | None = None  # combined with grade → specific class, e.g. "A"
+    message: str | None = None  # the text to send
+    body: str | None = None     # alias from frontend
+    subject: str | None = None  # optional subject line
+    grade: str | None = None    # filter to a specific grade
+    section: str | None = None  # combined with grade → specific class
     academic_year: str = "2025-2026"
 
 
@@ -249,7 +236,9 @@ async def broadcast(
 
     await set_tenant_context(db, tenant.id)
 
-    if not body.message.strip():
+    # Accept message from either 'message' or 'body' field
+    text = (body.message or body.body or "").strip()
+    if not text:
         raise HTTPException(status_code=400, detail="Message cannot be empty.")
 
     # Resolve target classes
@@ -297,10 +286,10 @@ async def broadcast(
 
     msgs = await send_to_users(
         unique_parents,
-        body.message,
+        text,
         "broadcast",
         db,
-        email_subject="[SchoolOS] School Announcement",
+        email_subject=f"[SchoolOS] {body.subject or 'School Announcement'}",
     )
 
     await db.commit()
@@ -382,3 +371,158 @@ async def message_log(
         }
         for m in messages
     ]
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# GET /communication/stats — message counts by type/channel/status
+# ─────────────────────────────────────────────────────────────────────────────
+
+@router.get("/stats", summary="Message stats for dashboard cards")
+async def message_stats(
+    days: int = 7,
+    tenant: Tenant = Depends(resolve_tenant),
+    db: AsyncSession = Depends(get_db),
+):
+    """Returns counts by message_type, channel, and status for the last N days."""
+    await set_tenant_context(db, tenant.id)
+
+    from datetime import timedelta
+    cutoff = datetime.utcnow() - timedelta(days=days)
+
+    type_q = await db.execute(
+        select(Message.message_type, func.count(Message.id))
+        .where(Message.tenant_id == tenant.id, Message.created_at >= cutoff)
+        .group_by(Message.message_type)
+    )
+    by_type = {row[0]: row[1] for row in type_q.all()}
+
+    status_q = await db.execute(
+        select(Message.status, func.count(Message.id))
+        .where(Message.tenant_id == tenant.id, Message.created_at >= cutoff)
+        .group_by(Message.status)
+    )
+    by_status = {row[0]: row[1] for row in status_q.all()}
+
+    channel_q = await db.execute(
+        select(Message.channel, func.count(Message.id))
+        .where(Message.tenant_id == tenant.id, Message.created_at >= cutoff)
+        .group_by(Message.channel)
+    )
+    by_channel = {row[0]: row[1] for row in channel_q.all()}
+
+    return {
+        "period_days": days,
+        "total": sum(by_status.values()),
+        "by_type": by_type,
+        "by_status": by_status,
+        "by_channel": by_channel,
+    }
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# GET /communication/grades — available grades for broadcast filtering
+# ─────────────────────────────────────────────────────────────────────────────
+
+@router.get("/grades", summary="List grades and sections for broadcast targeting")
+async def list_grades(
+    academic_year: str = "2025-2026",
+    tenant: Tenant = Depends(resolve_tenant),
+    db: AsyncSession = Depends(get_db),
+):
+    await set_tenant_context(db, tenant.id)
+
+    q = await db.execute(
+        select(Class.grade, Class.section)
+        .where(Class.tenant_id == tenant.id, Class.academic_year == academic_year)
+        .order_by(Class.grade, Class.section)
+    )
+    rows = q.all()
+
+    grades: dict[str, list[str]] = {}
+    for grade, section in rows:
+        grades.setdefault(grade, []).append(section)
+
+    return [{"grade": g, "sections": secs} for g, secs in grades.items()]
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# GET /communication/agents — autonomous agent definitions
+# ─────────────────────────────────────────────────────────────────────────────
+
+AGENT_DEFINITIONS = [
+    {
+        "id": "daily_digest",
+        "name": "Daily Digest Agent",
+        "description": "Sends tomorrow's schedule to all parents every evening at 7 PM",
+        "trigger": "Daily at 7:00 PM",
+        "channel": "Preferred (WhatsApp / SMS / Email)",
+        "icon": "📅",
+    },
+    {
+        "id": "substitution_alert",
+        "name": "Substitution Agent",
+        "description": "Notifies substitute teachers and affected parents when a teacher is absent",
+        "trigger": "On teacher absence report",
+        "channel": "Email + SMS",
+        "icon": "🔄",
+    },
+    {
+        "id": "duty_reminder",
+        "name": "Duty Reminder Agent",
+        "description": "Reminds teachers of their duty assignment 15 min before the slot",
+        "trigger": "15 min before duty slot",
+        "channel": "SMS",
+        "icon": "🛡️",
+    },
+    {
+        "id": "attendance_alert",
+        "name": "Attendance Agent",
+        "description": "Alerts parents when their child is marked absent during the day",
+        "trigger": "On absence marked",
+        "channel": "WhatsApp",
+        "icon": "📋",
+    },
+    {
+        "id": "pickup_notify",
+        "name": "Pickup Agent",
+        "description": "Confirms pickup requests and notifies the class teacher for release",
+        "trigger": "On parent pickup request",
+        "channel": "WhatsApp + SMS",
+        "icon": "🚗",
+    },
+    {
+        "id": "crisis_alert",
+        "name": "Crisis Agent",
+        "description": "Detects spikes in negative social mentions and alerts the principal",
+        "trigger": "On negative mention spike",
+        "channel": "SMS + Email",
+        "icon": "🚨",
+    },
+]
+
+
+@router.get("/agents", summary="List autonomous agent definitions")
+async def list_agents(
+    tenant: Tenant = Depends(resolve_tenant),
+    db: AsyncSession = Depends(get_db),
+):
+    """Returns agent definitions with live message counts from the last 7 days."""
+    await set_tenant_context(db, tenant.id)
+
+    from datetime import timedelta
+    cutoff = datetime.utcnow() - timedelta(days=7)
+
+    q = await db.execute(
+        select(Message.message_type, func.count(Message.id))
+        .where(Message.tenant_id == tenant.id, Message.created_at >= cutoff)
+        .group_by(Message.message_type)
+    )
+    counts = {row[0]: row[1] for row in q.all()}
+
+    result = []
+    for agent in AGENT_DEFINITIONS:
+        result.append({
+            **agent,
+            "messages_7d": counts.get(agent["id"], 0),
+        })
+    return result

@@ -43,11 +43,7 @@ interface PickupResponse {
 export default function PickupPage() {
   const [logs, setLogs] = useState<PickupLog[]>([]);
   const [loading, setLoading] = useState(false);
-  const [dateFrom, setDateFrom] = useState("");
-  const [dateTo, setDateTo] = useState("");
-  const [grade, setGrade] = useState("");
-  const [section, setSection] = useState("");
-  const [earlyOnly, setEarlyOnly] = useState(false);
+  const [actionLoading, setActionLoading] = useState<string | null>(null);
 
   useEffect(() => {
     loadLogs();
@@ -57,18 +53,24 @@ export default function PickupPage() {
   async function loadLogs() {
     setLoading(true);
     try {
-      const params: Record<string, string> = { limit: "100" };
-      if (dateFrom) params.start_date = dateFrom;
-      if (dateTo) params.end_date = dateTo;
-      if (grade) params.grade = grade;
-      if (section) params.section = section;
-      if (earlyOnly) params.early_only = "true";
-      const data = await api<PickupLog[]>("/pickup/log", { params });
+      const data = await api<PickupLog[]>("/pickup/log", { params: { limit: "100" } });
       setLogs(data);
     } catch (err) {
       console.error(err);
     } finally {
       setLoading(false);
+    }
+  }
+
+  async function handleAction(pickup_id: string, action: "approve" | "reject") {
+    setActionLoading(pickup_id + action);
+    try {
+      await apiPost(`/pickup/${pickup_id}/${action}`);
+      await loadLogs();
+    } catch (err) {
+      alert("Failed to update status");
+    } finally {
+      setActionLoading(null);
     }
   }
 
@@ -84,67 +86,8 @@ export default function PickupPage() {
 
   return (
     <div className="max-w-7xl mx-auto space-y-6">
-      <h1 className="text-2xl font-bold">Pickup Requests (Admin)</h1>
+      <h1 className="text-2xl font-bold mb-4">Pickup Requests (Admin)</h1>
 
-      {/* Filters */}
-      <div className="bg-white rounded-xl border border-gray-200 p-4 flex flex-wrap gap-4 items-end">
-        <div>
-          <label className="block text-sm font-medium text-gray-700 mb-1">From</label>
-          <input
-            type="date"
-            value={dateFrom}
-            onChange={(e) => setDateFrom(e.target.value)}
-            className="border border-gray-300 rounded-lg px-3 py-2 text-sm"
-          />
-        </div>
-        <div>
-          <label className="block text-sm font-medium text-gray-700 mb-1">To</label>
-          <input
-            type="date"
-            value={dateTo}
-            onChange={(e) => setDateTo(e.target.value)}
-            className="border border-gray-300 rounded-lg px-3 py-2 text-sm"
-          />
-        </div>
-        <div>
-          <label className="block text-sm font-medium text-gray-700 mb-1">Grade</label>
-          <input
-            type="text"
-            value={grade}
-            onChange={(e) => setGrade(e.target.value)}
-            className="border border-gray-300 rounded-lg px-3 py-2 text-sm"
-            placeholder="e.g. 3"
-          />
-        </div>
-        <div>
-          <label className="block text-sm font-medium text-gray-700 mb-1">Section</label>
-          <input
-            type="text"
-            value={section}
-            onChange={(e) => setSection(e.target.value)}
-            className="border border-gray-300 rounded-lg px-3 py-2 text-sm"
-            placeholder="e.g. B"
-          />
-        </div>
-        <div className="flex items-center gap-2">
-          <input
-            type="checkbox"
-            checked={earlyOnly}
-            onChange={(e) => setEarlyOnly(e.target.checked)}
-            id="earlyOnly"
-            className="mr-1"
-          />
-          <label htmlFor="earlyOnly" className="text-sm text-gray-700">Early Only</label>
-        </div>
-        <button
-          onClick={loadLogs}
-          className="px-4 py-2 bg-indigo-600 text-white rounded-lg text-sm font-medium hover:bg-indigo-700"
-        >
-          Search
-        </button>
-      </div>
-
-      {/* Pickup Log */}
       <div className="bg-white rounded-xl border border-gray-200 p-6">
         <div className="flex items-center justify-between mb-4">
           <h2 className="font-semibold">Pickup Log</h2>
@@ -166,6 +109,7 @@ export default function PickupPage() {
                   <th className="text-left px-4 py-3 font-medium">Geofence</th>
                   <th className="text-left px-4 py-3 font-medium">Requested</th>
                   <th className="text-left px-4 py-3 font-medium">Released</th>
+                  <th className="text-left px-4 py-3 font-medium">Actions</th>
                 </tr>
               </thead>
               <tbody>
@@ -188,6 +132,28 @@ export default function PickupPage() {
                     </td>
                     <td className="px-4 py-3 text-gray-500 text-xs">{new Date(l.requested_at).toLocaleString()}</td>
                     <td className="px-4 py-3 text-gray-500 text-xs">{l.released_at ? new Date(l.released_at).toLocaleString() : "—"}</td>
+                    <td className="px-4 py-3">
+                      {l.status === "pending" || l.status === "requested" ? (
+                        <div className="flex gap-2">
+                          <button
+                            className="px-3 py-1 bg-green-600 text-white rounded text-xs font-medium disabled:opacity-50"
+                            disabled={actionLoading === l.pickup_id + "approve"}
+                            onClick={() => handleAction(l.pickup_id, "approve")}
+                          >
+                            {actionLoading === l.pickup_id + "approve" ? "Approving..." : "Approve"}
+                          </button>
+                          <button
+                            className="px-3 py-1 bg-red-600 text-white rounded text-xs font-medium disabled:opacity-50"
+                            disabled={actionLoading === l.pickup_id + "reject"}
+                            onClick={() => handleAction(l.pickup_id, "reject")}
+                          >
+                            {actionLoading === l.pickup_id + "reject" ? "Rejecting..." : "Reject"}
+                          </button>
+                        </div>
+                      ) : (
+                        <span className="text-gray-400 text-xs">—</span>
+                      )}
+                    </td>
                   </tr>
                 ))}
               </tbody>

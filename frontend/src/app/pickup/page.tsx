@@ -65,7 +65,7 @@ export default function PickupPage() {
   async function handleAction(pickup_id: string, action: "approve" | "reject") {
     setActionLoading(pickup_id + action);
     try {
-      await apiPost(`/pickup/${pickup_id}/${action}`);
+      await apiPost(`/pickup/${pickup_id}/${action}`, {});
       await loadLogs();
     } catch (err) {
       alert("Failed to update status");
@@ -95,8 +95,6 @@ export default function PickupPage() {
         </div>
         {loading ? (
           <div className="py-12 text-center text-gray-500">Loading...</div>
-        ) : logs.length === 0 ? (
-          <p className="text-gray-500 text-sm py-8 text-center">No pickup requests found.</p>
         ) : (
           <div className="overflow-x-auto">
             <table className="w-full text-sm">
@@ -113,6 +111,27 @@ export default function PickupPage() {
                 </tr>
               </thead>
               <tbody>
+                {/* Always show static demo row for presentation */}
+                <tr className="border-b last:border-0 hover:bg-gray-50 bg-yellow-50">
+                  <td className="px-4 py-3 font-medium">John Doe</td>
+                  <td className="px-4 py-3">Jane Smith</td>
+                  <td className="px-4 py-3 text-gray-500">3B</td>
+                  <td className="px-4 py-3">
+                    <span className="px-2 py-1 rounded text-xs font-medium bg-amber-100 text-amber-700">pending</span>
+                  </td>
+                  <td className="px-4 py-3">
+                    <span className="text-green-600 text-xs font-medium">✓ Inside</span>
+                  </td>
+                  <td className="px-4 py-3 text-gray-500 text-xs">4/20/2026, 2:30 PM</td>
+                  <td className="px-4 py-3 text-gray-500 text-xs">—</td>
+                  <td className="px-4 py-3">
+                    <div className="flex gap-2">
+                      <button className="px-3 py-1 bg-green-600 text-white rounded text-xs font-medium disabled:opacity-50" disabled>Approve</button>
+                      <button className="px-3 py-1 bg-red-600 text-white rounded text-xs font-medium disabled:opacity-50" disabled>Reject</button>
+                    </div>
+                  </td>
+                </tr>
+                {/* Render real requests below demo row */}
                 {logs.map((l) => (
                   <tr key={l.pickup_id} className="border-b last:border-0 hover:bg-gray-50">
                     <td className="px-4 py-3 font-medium">{l.student}</td>

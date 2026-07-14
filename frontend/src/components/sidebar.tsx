@@ -3,7 +3,7 @@
 import Link from "next/link";
 import { usePathname } from "next/navigation";
 
-const nav = [
+const principalNav = [
   { href: "/", label: "Dashboard", icon: "📊" },
   { href: "/timetable", label: "Timetable", icon: "📅" },
   { href: "/substitution", label: "Substitution", icon: "🔄" },
@@ -15,8 +15,23 @@ const nav = [
   { href: "/audit", label: "Audit Trail", icon: "🔍" },
 ];
 
+const teacherNav = [
+  { href: "/teacher", label: "Dashboard", icon: "📊" },
+  { href: "/teacher/my-classes", label: "My Classes", icon: "🏫" },
+  { href: "/teacher/lesson-planning", label: "Lesson Planning", icon: "📝" },
+  { href: "/teacher/assessment-studio", label: "Assessment Studio", icon: "🧠" },
+  { href: "/teacher/exam-marking", label: "Exam Marking", icon: "✅" },
+  { href: "/teacher/student-insights", label: "Student Insights", icon: "📈" },
+  { href: "/teacher/student-pickup", label: "Student Pickup", icon: "🚗" },
+  { href: "/teacher/parent-communication", label: "Parent Communication", icon: "💬" },
+  { href: "/teacher/resources", label: "Resources", icon: "📚" },
+  { href: "/teacher/settings", label: "Settings", icon: "⚙️" },
+];
+
 export default function Sidebar() {
   const pathname = usePathname();
+  const isTeacherRoute = pathname?.startsWith("/teacher") ?? false;
+  const nav = isTeacherRoute ? teacherNav : principalNav;
 
   return (
     <aside className="w-64 bg-white border-r border-gray-200 flex flex-col">
@@ -49,11 +64,11 @@ export default function Sidebar() {
       <div className="p-4 border-t border-gray-200">
         <div className="flex items-center gap-3">
           <div className="w-8 h-8 rounded-full bg-indigo-100 flex items-center justify-center text-indigo-600 font-bold text-sm">
-            P
+            {isTeacherRoute ? "T" : "P"}
           </div>
           <div>
-            <p className="text-sm font-medium">Principal</p>
-            <p className="text-xs text-gray-500">Admin</p>
+            <p className="text-sm font-medium">{isTeacherRoute ? "Teacher" : "Principal"}</p>
+            <p className="text-xs text-gray-500">{isTeacherRoute ? "Portal" : "Admin"}</p>
           </div>
         </div>
       </div>

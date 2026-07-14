@@ -692,3 +692,262 @@ class DutyAssignment(Base):
                          name="uq_location_duty_slot_day"),
         CheckConstraint("day_of_week BETWEEN 0 AND 4", name="valid_duty_day"),
     )
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# CopilotCheckpoint  (persistent graph checkpoint storage)
+# ─────────────────────────────────────────────────────────────────────────────
+
+class CopilotCheckpoint(Base):
+    """
+    Persists copilot workflow checkpoints for resume/review actions.
+    Tenant isolation is enforced by tenant_id filtering and RLS.
+    """
+    __tablename__ = "copilot_checkpoints"
+
+    request_id: Mapped[str]             = mapped_column(String(64), primary_key=True)
+    conversation_id: Mapped[str | None] = mapped_column(String(64), nullable=True, index=True)
+    tenant_id: Mapped[uuid.UUID]        = mapped_column(UUID(as_uuid=True), ForeignKey("tenants.id", ondelete="CASCADE"), nullable=False, index=True)
+    tenant_slug: Mapped[str]            = mapped_column(String(100), nullable=False, index=True)
+    user_id: Mapped[str]                = mapped_column(String(128), nullable=False, index=True)
+    intent: Mapped[str]                 = mapped_column(String(64), nullable=False, index=True)
+    graph_state: Mapped[dict]           = mapped_column(JSON, default=dict)
+    current_status: Mapped[str]         = mapped_column(String(40), nullable=False, default="pending")
+    approval_status: Mapped[str]        = mapped_column(String(40), nullable=False, default="pending")
+    retry_count: Mapped[int]            = mapped_column(Integer, nullable=False, default=0)
+    expires_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True, index=True)
+    created_at: Mapped[datetime]        = mapped_column(DateTime(timezone=True), server_default=func.now(), nullable=False)
+    updated_at: Mapped[datetime]        = mapped_column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now(), nullable=False, index=True)
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# MarkingSession  (Assessment Review & Marking Studio — session container)
+# ─────────────────────────────────────────────────────────────────────────────
+
+class MarkingSession(Base):
+    """
+    A single marking session owned by one teacher at one school.
+
+    Every AssessmentSubmission, ScannedPage, and QuestionResponse belongs to
+    a MarkingSession.  The session tracks cumulative progress across the
+    student queue so an interrupted scanning session can be resumed.
+
+    copilot_request_id links to the CopilotCheckpoint that holds the
+    session-level LangGraph state (answer key, rubric, context).
+    """
+    __tablename__ = "marking_sessions"
+
+    session_id:              Mapped[uuid.UUID]      = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    tenant_id:               Mapped[uuid.UUID]      = mapped_column(UUID(as_uuid=True), ForeignKey("tenants.id", ondelete="CASCADE"), nullable=False, index=True)
+    teacher_id:              Mapped[str]            = mapped_column(String(128), nullable=False, index=True)
+    exam_title:              Mapped[str]            = mapped_column(String(255), nullable=False)
+    subject:                 Mapped[str | None]     = mapped_column(String(100))
+    grade:                   Mapped[str | None]     = mapped_column(String(50))
+    class_name:              Mapped[str | None]     = mapped_column(String(100))
+    curriculum:              Mapped[str | None]     = mapped_column(String(100))
+    academic_year:           Mapped[str | None]     = mapped_column(String(20))
+    term:                    Mapped[str | None]     = mapped_column(String(50))
+    exam_date:               Mapped[date_type | None] = mapped_column(Date)
+    total_marks:             Mapped[int | None]     = mapped_column(Integer)
+    time_allowed_minutes:    Mapped[int | None]     = mapped_column(Integer)
+    expected_pages_per_student: Mapped[int]         = mapped_column(Integer, default=1)
+    paper_type:              Mapped[str]            = mapped_column(String(50), default="open_ended")
+    input_method:            Mapped[str]            = mapped_column(String(50), default="upload")
+    language:                Mapped[str]            = mapped_column(String(50), default="English")
+    total_students:          Mapped[int]            = mapped_column(Integer, default=0)
+    captured_students:       Mapped[int]            = mapped_column(Integer, default=0)
+    processed_students:      Mapped[int]            = mapped_column(Integer, default=0)
+    pending_students:        Mapped[int]            = mapped_column(Integer, default=0)
+    flagged_students:        Mapped[int]            = mapped_column(Integer, default=0)
+    approved_students:       Mapped[int]            = mapped_column(Integer, default=0)
+    average_confidence:      Mapped[float | None]   = mapped_column(Float)
+    student_queue:           Mapped[list]           = mapped_column(JSON, default=list)
+    copilot_request_id:      Mapped[str | None]     = mapped_column(String(64), ForeignKey("copilot_checkpoints.request_id", ondelete="SET NULL"), nullable=True)
+    status:                  Mapped[str]            = mapped_column(String(50), nullable=False, default="draft")
+    teacher_notes:           Mapped[str | None]     = mapped_column(Text)
+    created_at:              Mapped[datetime]       = mapped_column(DateTime(timezone=True), server_default=func.now())
+    updated_at:              Mapped[datetime]       = mapped_column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now())
+
+    __table_args__ = (
+        CheckConstraint(
+            "paper_type IN ('scantron','printed_mcq','mixed','open_ended')",
+            name="valid_paper_type",
+        ),
+        CheckConstraint(
+            "status IN ('draft','scanning','uploading','processing','needs_clarification',"
+            "'pending_review','partially_approved','approved','rejected','failed')",
+            name="valid_marking_session_status",
+        ),
+        CheckConstraint(
+            "input_method IN ('smart_scan','upload','office_scanner')",
+            name="valid_input_method",
+        ),
+    )
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# AssessmentSubmission  (one student's paper within a MarkingSession)
+# ─────────────────────────────────────────────────────────────────────────────
+
+class AssessmentSubmission(Base):
+    """
+    Represents a single student's submission within a marking session.
+
+    Named 'AssessmentSubmission' (not 'StudentPaper') so this model can
+    support scanned papers, uploaded files, future online submissions,
+    assignments, and LMS imports without a schema change.
+
+    copilot_request_id stores the LangGraph graph state for this specific
+    submission so processing can be resumed after a gateway restart.
+    """
+    __tablename__ = "assessment_submissions"
+
+    submission_id:           Mapped[uuid.UUID]      = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    session_id:              Mapped[uuid.UUID]      = mapped_column(UUID(as_uuid=True), ForeignKey("marking_sessions.session_id", ondelete="CASCADE"), nullable=False, index=True)
+    tenant_id:               Mapped[uuid.UUID]      = mapped_column(UUID(as_uuid=True), ForeignKey("tenants.id", ondelete="CASCADE"), nullable=False, index=True)
+    student_name:            Mapped[str | None]     = mapped_column(String(255))
+    student_code:            Mapped[str | None]     = mapped_column(String(100))
+    paper_type:              Mapped[str]            = mapped_column(String(50), default="open_ended")
+    processing_pipeline:     Mapped[str | None]     = mapped_column(String(50))
+    status:                  Mapped[str]            = mapped_column(String(50), nullable=False, default="pending")
+    proposed_total:          Mapped[float | None]   = mapped_column(Float)
+    teacher_final_total:     Mapped[float | None]   = mapped_column(Float)
+    max_marks:               Mapped[int | None]     = mapped_column(Integer)
+    percentage:              Mapped[float | None]   = mapped_column(Float)
+    confidence_score:        Mapped[float | None]   = mapped_column(Float)
+    unanswered_count:        Mapped[int]            = mapped_column(Integer, default=0)
+    unresolved_count:        Mapped[int]            = mapped_column(Integer, default=0)
+    low_confidence_count:    Mapped[int]            = mapped_column(Integer, default=0)
+    objective_question_count: Mapped[int]           = mapped_column(Integer, default=0)
+    ai_graded_count:         Mapped[int]            = mapped_column(Integer, default=0)
+    deterministic_count:     Mapped[int]            = mapped_column(Integer, default=0)
+    teacher_overridden:      Mapped[bool]           = mapped_column(Boolean, default=False)
+    teacher_comments:        Mapped[str | None]     = mapped_column(Text)
+    tokens_used:             Mapped[int]            = mapped_column(Integer, default=0)
+    estimated_cost_usd:      Mapped[float]          = mapped_column(Float, default=0.0)
+    approved_by:             Mapped[str | None]     = mapped_column(String(128))
+    approved_at:             Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    copilot_request_id:      Mapped[str | None]     = mapped_column(String(64), ForeignKey("copilot_checkpoints.request_id", ondelete="SET NULL"), nullable=True)
+    created_at:              Mapped[datetime]       = mapped_column(DateTime(timezone=True), server_default=func.now())
+    updated_at:              Mapped[datetime]       = mapped_column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now())
+
+    __table_args__ = (
+        CheckConstraint(
+            "paper_type IN ('scantron','printed_mcq','mixed','open_ended')",
+            name="valid_submission_paper_type",
+        ),
+        CheckConstraint(
+            "status IN ('pending','processing','pending_review','approved','rejected','failed')",
+            name="valid_submission_status",
+        ),
+    )
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# ScannedPage  (one physical or digital page within a submission)
+# ─────────────────────────────────────────────────────────────────────────────
+
+class ScannedPage(Base):
+    """
+    Represents a single page of an AssessmentSubmission.
+
+    storage_key is a path or reference to the stored file — NEVER the raw
+    binary content.  Raw images are kept out of the database and out of
+    LangGraph state to protect student privacy and to avoid payload bloat.
+
+    quality_warnings is a JSON list of warning codes, e.g.:
+        ["blur", "low_lighting", "perspective_distortion"]
+    """
+    __tablename__ = "scanned_pages"
+
+    page_id:                 Mapped[uuid.UUID]      = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    submission_id:           Mapped[uuid.UUID]      = mapped_column(UUID(as_uuid=True), ForeignKey("assessment_submissions.submission_id", ondelete="CASCADE"), nullable=False, index=True)
+    session_id:              Mapped[uuid.UUID]      = mapped_column(UUID(as_uuid=True), ForeignKey("marking_sessions.session_id", ondelete="CASCADE"), nullable=False, index=True)
+    tenant_id:               Mapped[uuid.UUID]      = mapped_column(UUID(as_uuid=True), ForeignKey("tenants.id", ondelete="CASCADE"), nullable=False, index=True)
+    page_number:             Mapped[int]            = mapped_column(Integer, nullable=False)
+    expected_page_count:     Mapped[int]            = mapped_column(Integer, default=1)
+    storage_key:             Mapped[str]            = mapped_column(String(500), nullable=False)
+    original_filename:       Mapped[str | None]     = mapped_column(String(255))
+    file_type:               Mapped[str | None]     = mapped_column(String(20))
+    source:                  Mapped[str]            = mapped_column(String(50), default="upload")
+    quality_score:           Mapped[float | None]   = mapped_column(Float)
+    quality_warnings:        Mapped[list]           = mapped_column(JSON, default=list)
+    retake_required:         Mapped[bool]           = mapped_column(Boolean, default=False)
+    accepted_for_processing: Mapped[bool]           = mapped_column(Boolean, default=True)
+    page_status:             Mapped[str]            = mapped_column(String(50), default="pending")
+    upload_complete:         Mapped[bool]           = mapped_column(Boolean, default=True)
+    created_at:              Mapped[datetime]       = mapped_column(DateTime(timezone=True), server_default=func.now())
+
+    __table_args__ = (
+        CheckConstraint(
+            "source IN ('smart_scan','upload','office_scanner')",
+            name="valid_page_source",
+        ),
+        CheckConstraint(
+            "page_status IN ('pending','accepted','rejected','retake_required')",
+            name="valid_page_status",
+        ),
+        UniqueConstraint("submission_id", "page_number", name="uq_page_per_submission"),
+    )
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# QuestionResponse  (one question's extracted answer and proposed mark)
+# ─────────────────────────────────────────────────────────────────────────────
+
+class QuestionResponse(Base):
+    """
+    Stores the per-question result for a single AssessmentSubmission.
+
+    grading_method records which pipeline produced the proposed mark:
+        omr            → bubble-sheet recognition, no LLM
+        vision         → computer-vision MCQ detection, no LLM
+        deterministic  → rule-based comparison, no LLM
+        rubric_ai      → rubric-aware LLM grading
+
+    All proposed marks are status='proposed' until the teacher explicitly
+    approves or overrides them.  status='unresolved' blocks final approval.
+
+    evidence and rubric_result are JSON blobs so the review UI can show
+    exactly what the AI (or OCR) detected without a separate API call.
+    """
+    __tablename__ = "question_responses"
+
+    response_id:             Mapped[uuid.UUID]      = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    submission_id:           Mapped[uuid.UUID]      = mapped_column(UUID(as_uuid=True), ForeignKey("assessment_submissions.submission_id", ondelete="CASCADE"), nullable=False, index=True)
+    session_id:              Mapped[uuid.UUID]      = mapped_column(UUID(as_uuid=True), ForeignKey("marking_sessions.session_id", ondelete="CASCADE"), nullable=False, index=True)
+    tenant_id:               Mapped[uuid.UUID]      = mapped_column(UUID(as_uuid=True), ForeignKey("tenants.id", ondelete="CASCADE"), nullable=False, index=True)
+    question_number:         Mapped[int]            = mapped_column(Integer, nullable=False)
+    question_type:           Mapped[str]            = mapped_column(String(50), default="short_answer")
+    extracted_answer:        Mapped[str | None]     = mapped_column(Text)
+    extraction_confidence:   Mapped[float | None]   = mapped_column(Float)
+    source_page:             Mapped[int | None]     = mapped_column(Integer)
+    source_reference:        Mapped[str | None]     = mapped_column(String(255))
+    correct_answer:          Mapped[str | None]     = mapped_column(String(500))
+    proposed_marks:          Mapped[float | None]   = mapped_column(Float)
+    max_marks:               Mapped[float | None]   = mapped_column(Float)
+    teacher_final_marks:     Mapped[float | None]   = mapped_column(Float)
+    grading_method:          Mapped[str]            = mapped_column(String(50), default="deterministic")
+    confidence:              Mapped[float | None]   = mapped_column(Float)
+    ambiguous_mark:          Mapped[bool]           = mapped_column(Boolean, default=False)
+    requires_teacher_review: Mapped[bool]           = mapped_column(Boolean, default=True)
+    teacher_overridden:      Mapped[bool]           = mapped_column(Boolean, default=False)
+    teacher_comment:         Mapped[str | None]     = mapped_column(Text)
+    evidence:                Mapped[dict]           = mapped_column(JSON, default=dict)
+    rubric_result:           Mapped[dict]           = mapped_column(JSON, default=dict)
+    manual_edit_required:    Mapped[bool]           = mapped_column(Boolean, default=False)
+    status:                  Mapped[str]            = mapped_column(String(50), default="proposed")
+    created_at:              Mapped[datetime]       = mapped_column(DateTime(timezone=True), server_default=func.now())
+    updated_at:              Mapped[datetime]       = mapped_column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now())
+
+    __table_args__ = (
+        CheckConstraint(
+            "grading_method IN ('omr','vision','deterministic','rubric_ai')",
+            name="valid_grading_method",
+        ),
+        CheckConstraint(
+            "status IN ('unresolved','proposed','teacher_approved','teacher_rejected')",
+            name="valid_response_status",
+        ),
+        UniqueConstraint("submission_id", "question_number", name="uq_question_per_submission"),
+    )

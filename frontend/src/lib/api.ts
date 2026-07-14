@@ -37,3 +37,55 @@ export function apiPost<T = unknown>(path: string, body: unknown): Promise<T> {
     body: JSON.stringify(body),
   });
 }
+
+export interface CopilotRunRequest {
+  intent: string;
+  message: string;
+  structured_input?: Record<string, unknown>;
+  conversation_id?: string;
+}
+
+export interface CopilotContinueRequest {
+  request_id: string;
+  message?: string;
+  structured_input?: Record<string, unknown>;
+}
+
+export interface CopilotApproveRequest {
+  request_id: string;
+  approved: boolean;
+  notes?: string;
+}
+
+export interface CopilotResponse {
+  status: "needs_clarification" | "pending_review" | "approved" | "unsupported_intent" | "error";
+  request_id: string;
+  conversation_id?: string | null;
+  intent?: string | null;
+  message: string;
+  missing_fields?: string[];
+  clarification_question?: string | null;
+  result?: Record<string, unknown> | null;
+  execution: {
+    workflow: string;
+    current_step: string;
+    validation_passed: boolean;
+    retry_count: number;
+  };
+}
+
+export function copilotRun(body: CopilotRunRequest): Promise<CopilotResponse> {
+  return apiPost<CopilotResponse>("/ai/copilot/run", body);
+}
+
+export function copilotContinue(body: CopilotContinueRequest): Promise<CopilotResponse> {
+  return apiPost<CopilotResponse>("/ai/copilot/continue", body);
+}
+
+export function copilotApprove(body: CopilotApproveRequest): Promise<CopilotResponse> {
+  return apiPost<CopilotResponse>("/ai/copilot/approve", body);
+}
+
+export function copilotStatus(requestId: string): Promise<CopilotResponse> {
+  return api<CopilotResponse>(`/ai/copilot/status/${requestId}`);
+}

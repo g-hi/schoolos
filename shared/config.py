@@ -54,6 +54,10 @@ class Settings(BaseSettings):
     openai_api_key: str = ""
     llm_model: str = "llama-3.1-8b-instant"
     llm_max_tokens: int = 1000
+    copilot_provider: str = "deterministic"
+    copilot_max_retries: int = 1
+    copilot_checkpoint_backend: str = "postgres"
+    copilot_checkpoint_retention_days: int = 30
 
     # ── App ───────────────────────────────────────────────────────────────
     app_env: str = "development"

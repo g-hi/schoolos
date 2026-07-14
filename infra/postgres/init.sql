@@ -143,6 +143,23 @@ CREATE TABLE IF NOT EXISTS timetable_entries (
     CONSTRAINT valid_day_of_week CHECK (day_of_week BETWEEN 0 AND 6)
 );
 
+-- ── Copilot Checkpoints (persistent AI workflow state) ───────────────────────
+CREATE TABLE IF NOT EXISTS copilot_checkpoints (
+    request_id      VARCHAR(64)  PRIMARY KEY,
+    conversation_id VARCHAR(64),
+    tenant_id       UUID         NOT NULL REFERENCES tenants(id) ON DELETE CASCADE,
+    tenant_slug     VARCHAR(100) NOT NULL,
+    user_id         VARCHAR(128) NOT NULL,
+    intent          VARCHAR(64)  NOT NULL,
+    graph_state     JSONB        NOT NULL DEFAULT '{}',
+    current_status  VARCHAR(40)  NOT NULL DEFAULT 'pending',
+    approval_status VARCHAR(40)  NOT NULL DEFAULT 'pending',
+    retry_count     INTEGER      NOT NULL DEFAULT 0,
+    expires_at      TIMESTAMPTZ,
+    created_at      TIMESTAMPTZ  NOT NULL DEFAULT NOW(),
+    updated_at      TIMESTAMPTZ  NOT NULL DEFAULT NOW()
+);
+
 
 -- =============================================================================
 -- INDEXES
@@ -162,6 +179,9 @@ CREATE INDEX IF NOT EXISTS idx_periods_tenant_id         ON periods(tenant_id);
 CREATE INDEX IF NOT EXISTS idx_timetable_tenant_id       ON timetable_entries(tenant_id);
 CREATE INDEX IF NOT EXISTS idx_timetable_class_day       ON timetable_entries(class_id, day_of_week);
 CREATE INDEX IF NOT EXISTS idx_timetable_teacher_day     ON timetable_entries(teacher_id, day_of_week);
+CREATE INDEX IF NOT EXISTS idx_copilot_checkpoints_tenant_id   ON copilot_checkpoints(tenant_id);
+CREATE INDEX IF NOT EXISTS idx_copilot_checkpoints_updated_at  ON copilot_checkpoints(updated_at DESC);
+CREATE INDEX IF NOT EXISTS idx_copilot_checkpoints_expires_at  ON copilot_checkpoints(expires_at);
 
 
 -- =============================================================================
@@ -202,6 +222,7 @@ ALTER TABLE student_parents  ENABLE ROW LEVEL SECURITY;
 ALTER TABLE audit_logs       ENABLE ROW LEVEL SECURITY;
 ALTER TABLE periods          ENABLE ROW LEVEL SECURITY;
 ALTER TABLE timetable_entries ENABLE ROW LEVEL SECURITY;
+ALTER TABLE copilot_checkpoints ENABLE ROW LEVEL SECURITY;
 
 -- Direct tenant_id policies
 CREATE POLICY tenant_isolation ON users
@@ -227,6 +248,22 @@ CREATE POLICY tenant_isolation ON periods
 
 CREATE POLICY tenant_isolation ON timetable_entries
     USING (tenant_id = current_tenant_id());
+
+CREATE POLICY tenant_isolation ON copilot_checkpoints
+    USING (tenant_id = current_tenant_id());
+
+CREATE OR REPLACE FUNCTION set_updated_at_copilot_checkpoints()
+RETURNS TRIGGER AS $$
+BEGIN
+    NEW.updated_at = NOW();
+    RETURN NEW;
+END;
+$$ LANGUAGE plpgsql;
+
+DROP TRIGGER IF EXISTS trg_set_updated_at_copilot_checkpoints ON copilot_checkpoints;
+CREATE TRIGGER trg_set_updated_at_copilot_checkpoints
+BEFORE UPDATE ON copilot_checkpoints
+FOR EACH ROW EXECUTE FUNCTION set_updated_at_copilot_checkpoints();
 
 -- Join-based policies for tables without a direct tenant_id column
 CREATE POLICY tenant_isolation ON teacher_subjects

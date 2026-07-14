@@ -49,8 +49,111 @@ interface Report {
 }
 
 export default function SocialPage() {
-  const [mentions, setMentions] = useState<Mention[]>([]);
-  const [report, setReport] = useState<Report | null>(null);
+    const [showDropdown, setShowDropdown] = useState(false);
+  // Demo mock data
+  const mockMentions: Mention[] = [
+    {
+      id: "1",
+      platform: "Twitter",
+      author: "@parent123",
+      text: "Greenwood School is amazing! My kids love it here.",
+      url: null,
+      posted_at: "2026-04-18T10:00:00Z",
+      sentiment: "positive",
+      sentiment_score: 0.95,
+      topics: ["facilities", "teachers"],
+      is_competitor: false,
+      engagement: 23,
+      processed: true,
+    },
+    {
+      id: "2",
+      platform: "Facebook",
+      author: "Jane Doe",
+      text: "Heard great things about Greenwood's science program.",
+      url: null,
+      posted_at: "2026-04-17T15:30:00Z",
+      sentiment: "positive",
+      sentiment_score: 0.88,
+      topics: ["science", "curriculum"],
+      is_competitor: false,
+      engagement: 12,
+      processed: true,
+    },
+    {
+      id: "3",
+      platform: "Instagram",
+      author: "@schoolreviewer",
+      text: "Greenwood School's new playground is a hit!",
+      url: null,
+      posted_at: "2026-04-16T09:00:00Z",
+      sentiment: "positive",
+      sentiment_score: 0.91,
+      topics: ["playground", "facilities"],
+      is_competitor: false,
+      engagement: 30,
+      processed: true,
+    },
+    {
+      id: "4",
+      platform: "Twitter",
+      author: "@concernedparent",
+      text: "Wish the school would improve parking during pickup.",
+      url: null,
+      posted_at: "2026-04-15T17:45:00Z",
+      sentiment: "negative",
+      sentiment_score: 0.2,
+      topics: ["parking", "pickup"],
+      is_competitor: false,
+      engagement: 5,
+      processed: true,
+    }
+  ];
+
+  const mockReport: Report = {
+    period: "Last 7 days",
+    our_school: {
+      total_mentions: 4,
+      sentiment: { positive: 3, negative: 1, neutral: 0 },
+      avg_sentiment_score: 0.735,
+      by_platform: { Twitter: 2, Facebook: 1, Instagram: 1 },
+      top_topics: [
+        { topic: "facilities", count: 2 },
+        { topic: "teachers", count: 1 },
+        { topic: "science", count: 1 },
+        { topic: "curriculum", count: 1 },
+        { topic: "playground", count: 1 },
+        { topic: "parking", count: 1 },
+        { topic: "pickup", count: 1 }
+      ],
+      top_posts: [
+        { platform: "Instagram", text: "Greenwood School's new playground is a hit!", author: "@schoolreviewer", engagement: 30, sentiment: "positive", posted_at: "2026-04-16T09:00:00Z" },
+        { platform: "Twitter", text: "Greenwood School is amazing! My kids love it here.", author: "@parent123", engagement: 23, sentiment: "positive", posted_at: "2026-04-18T10:00:00Z" },
+        { platform: "Facebook", text: "Heard great things about Greenwood's science program.", author: "Jane Doe", engagement: 12, sentiment: "positive", posted_at: "2026-04-17T15:30:00Z" },
+        { platform: "Twitter", text: "Wish the school would improve parking during pickup.", author: "@concernedparent", engagement: 5, sentiment: "negative", posted_at: "2026-04-15T17:45:00Z" }
+      ]
+    },
+    competitors: {
+      total_mentions: 2,
+      avg_sentiment_score: 0.5,
+      top_posts: [
+        { competitor: "Blue Valley School", platform: "Twitter", text: "Blue Valley's sports day was well organized.", engagement: 15, sentiment: "positive" },
+        { competitor: "Red Oak Academy", platform: "Facebook", text: "Red Oak's cafeteria needs improvement.", engagement: 3, sentiment: "negative" }
+      ]
+    },
+    daily_trend: [
+      { date: "2026-04-14", mentions: 0, avg_sentiment: null, negative_count: 0 },
+      { date: "2026-04-15", mentions: 1, avg_sentiment: 0.2, negative_count: 1 },
+      { date: "2026-04-16", mentions: 1, avg_sentiment: 0.91, negative_count: 0 },
+      { date: "2026-04-17", mentions: 1, avg_sentiment: 0.88, negative_count: 0 },
+      { date: "2026-04-18", mentions: 1, avg_sentiment: 0.95, negative_count: 0 },
+      { date: "2026-04-19", mentions: 0, avg_sentiment: null, negative_count: 0 },
+      { date: "2026-04-20", mentions: 0, avg_sentiment: null, negative_count: 0 }
+    ]
+  };
+
+  const [mentions, setMentions] = useState<Mention[]>(mockMentions);
+  const [report, setReport] = useState<Report | null>(mockReport);
   const [loading, setLoading] = useState(false);
   const [analyzing, setAnalyzing] = useState(false);
   const [result, setResult] = useState<string | null>(null);
@@ -122,6 +225,31 @@ export default function SocialPage() {
 
   return (
     <div className="max-w-7xl mx-auto space-y-6">
+      {/* Coming Soon Dropdown */}
+      <div className="flex justify-end mb-2">
+        <div className="relative">
+          <button
+            className="px-4 py-2 bg-yellow-400 text-yellow-900 rounded-lg text-sm font-semibold shadow hover:bg-yellow-300 focus:outline-none"
+            onClick={() => setShowDropdown((v) => !v)}
+          >
+            Coming Soon ▼
+          </button>
+          {showDropdown && (
+            <div className="absolute right-0 mt-2 w-72 bg-white border border-yellow-200 rounded-lg shadow-lg z-10 p-4">
+              <div className="font-bold text-yellow-800 mb-2">Planned Agentic Features</div>
+              <ul className="list-disc pl-5 text-yellow-900 text-sm space-y-1">
+                <li>Targeted parent marketing (AI identifies and suggests outreach to potential parents)</li>
+                <li>Institutional partnerships (AI finds and recommends companies for group offers)</li>
+                <li>Automated campaign management (AI schedules and posts across platforms)</li>
+                <li>Lead capture & CRM integration (AI logs and routes inquiries automatically)</li>
+                <li>Alumni & community engagement (AI manages outreach and events)</li>
+                <li>Competitor benchmarking (AI compares school performance to others)</li>
+              </ul>
+              <div className="mt-2 text-yellow-700 text-xs">These features are planned for future releases.</div>
+            </div>
+          )}
+        </div>
+      </div>
       <div className="flex items-center justify-between">
         <h1 className="text-2xl font-bold">Social Media Analytics</h1>
         <div className="flex gap-3">
@@ -327,6 +455,20 @@ export default function SocialPage() {
           )}
         </>
       )}
+
+      {/* Pipeline/Coming Soon Section */}
+      <div className="bg-yellow-50 border border-yellow-200 rounded-xl p-6 mt-8">
+        <h2 className="text-xl font-bold mb-2 text-yellow-800">Coming Soon: Agentic Marketing Features</h2>
+        <ul className="list-disc pl-6 text-yellow-900 space-y-1">
+          <li>Targeted parent marketing (AI identifies and suggests outreach to potential parents)</li>
+          <li>Institutional partnerships (AI finds and recommends companies for group offers)</li>
+          <li>Automated campaign management (AI schedules and posts across platforms)</li>
+          <li>Lead capture & CRM integration (AI logs and routes inquiries automatically)</li>
+          <li>Alumni & community engagement (AI manages outreach and events)</li>
+          <li>Competitor benchmarking (AI compares school performance to others)</li>
+        </ul>
+        <div className="mt-2 text-yellow-700 text-sm">These features are planned for future releases to further boost your school's marketing and outreach.</div>
+      </div>
     </div>
   );
 }

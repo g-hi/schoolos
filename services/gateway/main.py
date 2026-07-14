@@ -35,6 +35,8 @@ from services.gateway.routers.audit import router as audit_router
 from services.gateway.routers.dashboard import router as dashboard_router
 from services.gateway.routers.social import router as social_router
 from services.gateway.routers.duty import router as duty_router
+from services.gateway.routers.ai_copilot import router as ai_copilot_router
+from services.gateway.routers.exam_marking import router as exam_marking_router
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -49,14 +51,19 @@ async def lifespan(app: FastAPI):
 
     # Auto-create tables (safe for Render where init.sql doesn't run)
     import asyncio
-    for attempt in range(5):
+    # Explicit import of the full models module guarantees every ORM class
+    # registers its table with Base.metadata *before* create_all runs.
+    # This is the Alembic-ready pattern: env.py would do the same import.
+    import shared.db.models as _orm_models  # noqa: F401
+    from shared.db.base import Base
+    from shared.db.connection import engine
+
+    # ── Step 1: one-time DDL migrations (best-effort, never blocks startup) ──
+    for attempt in range(3):
         try:
-            from shared.db.connection import engine
-            from shared.db.models import Base
             async with engine.begin() as conn:
-                # One-time schema fix: drop old duty_assignments table so
-                # create_all can recreate it with the correct schema
-                # (removed week_start column, changed constraints)
+                # Drop old duty_assignments table if it has the removed week_start
+                # column so create_all can recreate it with the correct schema.
                 await conn.execute(text("""
                     DO $$
                     BEGIN
@@ -69,29 +76,38 @@ async def lifespan(app: FastAPI):
                         END IF;
                     END $$
                 """))
+            break
+        except Exception as e:
+            print(f"DDL migration attempt {attempt + 1}/3 failed: {e}")
+            if attempt < 2:
+                await asyncio.sleep(2)
 
+    # ── Step 2: create all tables (idempotent — uses checkfirst internally) ──
+    for attempt in range(5):
+        try:
+            async with engine.begin() as conn:
                 await conn.run_sync(Base.metadata.create_all)
+            print(f"Database schema ready — {len(Base.metadata.tables)} tables registered")
 
             # Seed default tenant if it doesn't exist
             from shared.db.connection import AsyncSessionLocal
-            from shared.db.models import Tenant
             from sqlalchemy import select
-            async with AsyncSessionLocal() as session:
-                result = await session.execute(select(Tenant).limit(1))
+            async with AsyncSessionLocal() as db_session:
+                result = await db_session.execute(select(_orm_models.Tenant).limit(1))
                 if result.scalar_one_or_none() is None:
-                    session.add(Tenant(
+                    db_session.add(_orm_models.Tenant(
                         name="Greenwood International Academy",
                         slug="greenwood",
                     ))
-                    await session.commit()
+                    await db_session.commit()
             print("Database ready")
             break
         except Exception as e:
-            print(f"DB init attempt {attempt+1}/5 failed: {e}")
+            print(f"DB create_all attempt {attempt + 1}/5 failed: {e}")
             if attempt < 4:
                 await asyncio.sleep(3)
             else:
-                print("WARNING: Could not connect to database, starting anyway")
+                print("WARNING: Could not create/verify tables — starting anyway")
 
     yield
     # ── Shutdown ─────────────────────────────────────────────────────────────
@@ -135,6 +151,8 @@ app.include_router(audit_router)
 app.include_router(dashboard_router)
 app.include_router(social_router)
 app.include_router(duty_router)
+app.include_router(ai_copilot_router)
+app.include_router(exam_marking_router)
 
 # =============================================================================
 # ROUTES

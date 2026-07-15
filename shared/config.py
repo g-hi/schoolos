@@ -10,6 +10,15 @@ class Settings(BaseSettings):
     - Type-safe: if DATABASE_URL is missing, startup fails with a clear error.
     - No manual os.environ.get() calls scattered through the codebase.
     - The lru_cache below ensures we only read the file once.
+
+    Production secret key requirements
+    -----------------------------------
+    SECRET_KEY must be a randomly generated string of at least 32 characters.
+    The application refuses to start in production if SECRET_KEY is default,
+    empty, or insufficiently short.
+    See shared.auth.jwt.validate_secret_key_for_environment().
+
+    On Render, SECRET_KEY is auto-generated via generateValue: true in render.yaml.
     """
 
     model_config = SettingsConfigDict(

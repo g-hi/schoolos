@@ -13,6 +13,9 @@ services:
     branch: master
     plan: free
     dockerfilePath: ./Dockerfile
+    # The Dockerfile CMD runs `alembic upgrade head` before uvicorn.
+    # This ensures every migration is applied before the application
+    # accepts traffic.  A migration failure stops the deployment.
     envVars:
       - key: DATABASE_URL
         fromDatabase:

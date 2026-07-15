@@ -20,6 +20,7 @@ from sqlalchemy.ext.asyncio import async_engine_from_config
 
 # ── Import all models so metadata is fully populated ─────────────────────────
 import shared.db.models as _models  # noqa: F401 — registers every ORM class
+import shared.db.parent_models as _parent_models  # noqa: F401 — Phase 8.1 tables
 from shared.db.base import Base
 
 # ── Alembic config object ─────────────────────────────────────────────────────

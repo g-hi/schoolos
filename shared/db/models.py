@@ -246,9 +246,26 @@ class StudentParent(Base):
     """
     __tablename__ = "student_parents"
 
-    student_id:    Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), ForeignKey("students.id", ondelete="CASCADE"), primary_key=True)
-    parent_id:     Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), ForeignKey("users.id",    ondelete="CASCADE"), primary_key=True)
-    relation_type: Mapped[str]       = mapped_column(String(50), default="parent")  # mother/father/guardian
+    student_id:    Mapped[uuid.UUID]          = mapped_column(UUID(as_uuid=True), ForeignKey("students.id", ondelete="CASCADE"), primary_key=True)
+    parent_id:     Mapped[uuid.UUID]          = mapped_column(UUID(as_uuid=True), ForeignKey("users.id",    ondelete="CASCADE"), primary_key=True)
+    relation_type: Mapped[str]                = mapped_column(String(50), default="parent")  # mother/father/guardian
+
+    # ── Phase 8.1 Parent Experience columns ──────────────────────────────────
+    # family_id is nullable to preserve legacy rows that pre-date the Parent
+    # Experience platform. The application layer requires family_id for all
+    # newly created Parent Experience relationships.
+    # Do not set NOT NULL until a controlled backfill of legacy data is complete.
+    family_id:           Mapped[uuid.UUID | None] = mapped_column(
+        UUID(as_uuid=True),
+        ForeignKey("families.id", ondelete="SET NULL"),
+        nullable=True,
+        index=True,
+        default=None,
+    )
+    is_primary:          Mapped[bool]             = mapped_column(Boolean, nullable=False, server_default="false")
+    can_pickup:          Mapped[bool]             = mapped_column(Boolean, nullable=False, server_default="true")
+    can_view_academics:  Mapped[bool]             = mapped_column(Boolean, nullable=False, server_default="true")
+    can_view_behaviour:  Mapped[bool]             = mapped_column(Boolean, nullable=False, server_default="true")
 
     student: Mapped["Student"] = relationship("Student", back_populates="parents")
     parent:  Mapped["User"]    = relationship("User")
@@ -951,3 +968,9 @@ class QuestionResponse(Base):
         ),
         UniqueConstraint("submission_id", "question_number", name="uq_question_per_submission"),
     )
+
+
+# -- Parent Experience models (Phase 8.1) -------------------------------------
+# Explicit import ensures all parent tables are registered with Base.metadata.
+# Uses a named alias to prevent wildcard import and circular-import risks.
+import shared.db.parent_models as _parent_models  # noqa: F401

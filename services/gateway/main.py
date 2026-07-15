@@ -37,6 +37,10 @@ from services.gateway.routers.social import router as social_router
 from services.gateway.routers.duty import router as duty_router
 from services.gateway.routers.ai_copilot import router as ai_copilot_router
 from services.gateway.routers.exam_marking import router as exam_marking_router
+# Phase 8.1 — Parent Experience
+from services.gateway.routers.auth import router as auth_router
+from services.gateway.routers.parent import router as parent_router
+from services.gateway.routers.families import router as families_router
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -49,12 +53,20 @@ async def lifespan(app: FastAPI):
     # ── Startup ──────────────────────────────────────────────────────────────
     print(f"SchoolOS Gateway starting in '{settings.app_env}' mode")
 
-    # Auto-create tables (safe for Render where init.sql doesn't run)
+    # ── Step 0: Production secret key validation ──────────────────────
+    from shared.auth.jwt import validate_secret_key_for_environment
+    validate_secret_key_for_environment()
+
+    # Auto-create tables (development / test only).
+    # In production, Alembic runs via the Dockerfile CMD before uvicorn starts.
+    # create_all is intentionally disabled in production to prevent silently
+    # mixing DDL methods with Alembic's authoritative schema evolution.
     import asyncio
     # Explicit import of the full models module guarantees every ORM class
     # registers its table with Base.metadata *before* create_all runs.
     # This is the Alembic-ready pattern: env.py would do the same import.
     import shared.db.models as _orm_models  # noqa: F401
+    import shared.db.parent_models as _parent_models  # noqa: F401
     from shared.db.base import Base
     from shared.db.connection import engine
 
@@ -82,32 +94,35 @@ async def lifespan(app: FastAPI):
             if attempt < 2:
                 await asyncio.sleep(2)
 
-    # ── Step 2: create all tables (idempotent — uses checkfirst internally) ──
-    for attempt in range(5):
-        try:
-            async with engine.begin() as conn:
-                await conn.run_sync(Base.metadata.create_all)
-            print(f"Database schema ready — {len(Base.metadata.tables)} tables registered")
+    # ── Step 2: create all tables (dev/test only; idempotent) ──────────────
+    if settings.app_env != "production":
+        for attempt in range(5):
+            try:
+                async with engine.begin() as conn:
+                    await conn.run_sync(Base.metadata.create_all)
+                print(f"Database schema ready — {len(Base.metadata.tables)} tables registered")
 
-            # Seed default tenant if it doesn't exist
-            from shared.db.connection import AsyncSessionLocal
-            from sqlalchemy import select
-            async with AsyncSessionLocal() as db_session:
-                result = await db_session.execute(select(_orm_models.Tenant).limit(1))
-                if result.scalar_one_or_none() is None:
-                    db_session.add(_orm_models.Tenant(
-                        name="Greenwood International Academy",
-                        slug="greenwood",
-                    ))
-                    await db_session.commit()
-            print("Database ready")
-            break
-        except Exception as e:
-            print(f"DB create_all attempt {attempt + 1}/5 failed: {e}")
-            if attempt < 4:
-                await asyncio.sleep(3)
-            else:
-                print("WARNING: Could not create/verify tables — starting anyway")
+                # Seed default tenant if it doesn't exist
+                from shared.db.connection import AsyncSessionLocal
+                from sqlalchemy import select
+                async with AsyncSessionLocal() as db_session:
+                    result = await db_session.execute(select(_orm_models.Tenant).limit(1))
+                    if result.scalar_one_or_none() is None:
+                        db_session.add(_orm_models.Tenant(
+                            name="Greenwood International Academy",
+                            slug="greenwood",
+                        ))
+                        await db_session.commit()
+                print("Database ready")
+                break
+            except Exception as e:
+                print(f"DB create_all attempt {attempt + 1}/5 failed: {e}")
+                if attempt < 4:
+                    await asyncio.sleep(3)
+                else:
+                    print("WARNING: Could not create/verify tables — starting anyway")
+    else:
+        print("Production mode: schema managed by Alembic. Skipping create_all.")
 
     yield
     # ── Shutdown ─────────────────────────────────────────────────────────────
@@ -153,6 +168,10 @@ app.include_router(social_router)
 app.include_router(duty_router)
 app.include_router(ai_copilot_router)
 app.include_router(exam_marking_router)
+# Phase 8.1 — Parent Experience
+app.include_router(auth_router)
+app.include_router(parent_router)
+app.include_router(families_router)
 
 # =============================================================================
 # ROUTES

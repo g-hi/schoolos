@@ -24,10 +24,12 @@ redis_data/
 
 # Generated
 *.pdf
-k e y s _ N o t   P a r t   o f   C o d e / 
- 
+k e y s _ N o t   P a r t   o f   C o d e /
+
 # Temporary runtime files
 tmp_*
 tmp_runtime/
 tmp_uploads/
- 
+
+# Local database backups
+backups/

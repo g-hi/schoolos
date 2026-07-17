@@ -65,10 +65,12 @@ async def run_copilot(
 @router.post("/continue", response_model=CopilotResponse, summary="Continue a workflow after clarification")
 async def continue_copilot(
     body: CopilotContinueRequest,
+    request: Request,
     tenant: Tenant = Depends(resolve_tenant),
     db: AsyncSession = Depends(get_db),
 ):
     await set_tenant_context(db, tenant.id)
+    user_id, user_role = _resolve_user_context(request)
     return await service.continue_run(
         db=db,
         tenant_id=str(tenant.id),
@@ -76,16 +78,20 @@ async def continue_copilot(
         request_id=body.request_id,
         message=body.message,
         structured_input=body.structured_input,
+        current_user_id=user_id,
+        current_user_role=user_role,
     )
 
 
 @router.post("/approve", response_model=CopilotResponse, summary="Approve generated AI output")
 async def approve_copilot(
     body: CopilotApproveRequest,
+    request: Request,
     tenant: Tenant = Depends(resolve_tenant),
     db: AsyncSession = Depends(get_db),
 ):
     await set_tenant_context(db, tenant.id)
+    user_id, user_role = _resolve_user_context(request)
     return await service.approve(
         db=db,
         tenant_id=str(tenant.id),
@@ -93,21 +99,27 @@ async def approve_copilot(
         request_id=body.request_id,
         approved=body.approved,
         notes=body.notes,
+        current_user_id=user_id,
+        current_user_role=user_role,
     )
 
 
 @router.get("/status/{request_id}", response_model=CopilotResponse, summary="Get workflow status")
 async def copilot_status(
     request_id: str,
+    request: Request,
     tenant: Tenant = Depends(resolve_tenant),
     db: AsyncSession = Depends(get_db),
 ):
     await set_tenant_context(db, tenant.id)
     if not request_id.strip():
         return service._error_response(str(uuid.uuid4()), "Request ID is required.")
+    user_id, user_role = _resolve_user_context(request)
     return await service.status(
         db=db,
         tenant_id=str(tenant.id),
         tenant_slug=tenant.slug,
         request_id=request_id,
+        current_user_id=user_id,
+        current_user_role=user_role,
     )

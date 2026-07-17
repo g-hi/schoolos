@@ -34,6 +34,10 @@ def _run_service(service: CopilotOrchestratorService, tenant_id: str, tenant_slu
     )
 
 
+def _service_identity() -> dict[str, str]:
+    return {"current_user_id": "teacher-1", "current_user_role": "teacher"}
+
+
 def _run_assessment_service(service: CopilotOrchestratorService, tenant_id: str, tenant_slug: str, structured_input: dict):
     return asyncio.run(
         service.run(
@@ -90,6 +94,7 @@ def test_checkpoint_creation(reset_copilot_settings):
             tenant_id="11111111-1111-1111-1111-111111111111",
             tenant_slug="greenwood",
             request_id=response.request_id,
+            **_service_identity(),
         )
     )
     assert status.status == "pending_review"
@@ -118,6 +123,7 @@ def test_resume_after_interruption(reset_copilot_settings):
             request_id=first.request_id,
             message="45",
             structured_input={"duration_minutes": 45},
+            **_service_identity(),
         )
     )
     assert resumed.status == "pending_review"
@@ -144,6 +150,7 @@ def test_tenant_isolation(reset_copilot_settings):
             tenant_id="22222222-2222-2222-2222-222222222222",
             tenant_slug="other-school",
             request_id=response.request_id,
+            **_service_identity(),
         )
     )
     assert other_tenant.status == "error"
@@ -172,6 +179,7 @@ def test_approval_persistence_and_status_retrieval(reset_copilot_settings):
             request_id=response.request_id,
             approved=True,
             notes="Looks good",
+            **_service_identity(),
         )
     )
     assert approved.status == "approved"
@@ -182,6 +190,7 @@ def test_approval_persistence_and_status_retrieval(reset_copilot_settings):
             tenant_id="11111111-1111-1111-1111-111111111111",
             tenant_slug="greenwood",
             request_id=response.request_id,
+            **_service_identity(),
         )
     )
     assert status_after.status == "approved"
@@ -208,6 +217,7 @@ def test_status_retrieval(reset_copilot_settings):
             tenant_id="11111111-1111-1111-1111-111111111111",
             tenant_slug="greenwood",
             request_id=response.request_id,
+            **_service_identity(),
         )
     )
     assert current_status.request_id == response.request_id
@@ -237,6 +247,7 @@ def test_expired_checkpoint_handling(reset_copilot_settings):
             tenant_id="11111111-1111-1111-1111-111111111111",
             tenant_slug="greenwood",
             request_id=response.request_id,
+            **_service_identity(),
         )
     )
     assert status_after_expiry.status == "error"
@@ -264,9 +275,100 @@ def test_in_memory_fallback_when_postgres_unavailable(reset_copilot_settings):
             tenant_id="11111111-1111-1111-1111-111111111111",
             tenant_slug="greenwood",
             request_id=response.request_id,
+            **_service_identity(),
         )
     )
     assert status.status == "pending_review"
+
+
+def test_checkpoint_access_requires_same_user(reset_copilot_settings):
+    settings.copilot_checkpoint_backend = "memory"
+    service = CopilotOrchestratorService()
+    response = _run_service(
+        service,
+        tenant_id="11111111-1111-1111-1111-111111111111",
+        tenant_slug="greenwood",
+        structured_input={
+            "grade": "5",
+            "subject": "Science",
+            "topic": "Ecosystems",
+            "duration_minutes": 45,
+        },
+    )
+
+    denied = asyncio.run(
+        service.status(
+            db=None,
+            tenant_id="11111111-1111-1111-1111-111111111111",
+            tenant_slug="greenwood",
+            request_id=response.request_id,
+            current_user_id="teacher-2",
+            current_user_role="teacher",
+        )
+    )
+
+    assert denied.status == "error"
+    assert denied.message == "No workflow state found for this request."
+
+
+def test_checkpoint_access_requires_same_role(reset_copilot_settings):
+    settings.copilot_checkpoint_backend = "memory"
+    service = CopilotOrchestratorService()
+    response = _run_service(
+        service,
+        tenant_id="11111111-1111-1111-1111-111111111111",
+        tenant_slug="greenwood",
+        structured_input={
+            "grade": "5",
+            "subject": "Science",
+            "topic": "Ecosystems",
+            "duration_minutes": 45,
+        },
+    )
+
+    denied = asyncio.run(
+        service.status(
+            db=None,
+            tenant_id="11111111-1111-1111-1111-111111111111",
+            tenant_slug="greenwood",
+            request_id=response.request_id,
+            current_user_id="teacher-1",
+            current_user_role="principal",
+        )
+    )
+
+    assert denied.status == "error"
+    assert denied.message == "No workflow state found for this request."
+
+
+def test_checkpoint_access_requires_matching_workflow(reset_copilot_settings):
+    settings.copilot_checkpoint_backend = "memory"
+    service = CopilotOrchestratorService()
+    response = _run_service(
+        service,
+        tenant_id="11111111-1111-1111-1111-111111111111",
+        tenant_slug="greenwood",
+        structured_input={
+            "grade": "5",
+            "subject": "Science",
+            "topic": "Ecosystems",
+            "duration_minutes": 45,
+        },
+    )
+
+    denied = asyncio.run(
+        service.status(
+            db=None,
+            tenant_id="11111111-1111-1111-1111-111111111111",
+            tenant_slug="greenwood",
+            request_id=response.request_id,
+            expected_workflow="parent_assistant",
+            **_service_identity(),
+        )
+    )
+
+    assert denied.status == "error"
+    assert denied.message == "No workflow state found for this request."
 
 
 def test_assessment_generation_workflow(reset_copilot_settings):

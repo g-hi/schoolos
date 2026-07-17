@@ -6,6 +6,8 @@ from pydantic import BaseModel, Field
 
 
 CopilotStatus = Literal[
+    "completed",
+    "unavailable",
     "needs_clarification",
     "pending_review",
     "approved",
@@ -41,6 +43,16 @@ class CopilotExecutionInfo(BaseModel):
     tenant_slug: str | None = None
 
 
+class CopilotResponseStudent(BaseModel):
+    id: str | None = None
+    display_name: str
+
+
+class CopilotResponseSource(BaseModel):
+    type: str
+    label: str
+
+
 class CopilotResponse(BaseModel):
     status: CopilotStatus
     request_id: str
@@ -50,4 +62,11 @@ class CopilotResponse(BaseModel):
     missing_fields: list[str] = Field(default_factory=list)
     clarification_question: str | None = None
     result: dict[str, Any] | None = None
+    response_kind: str | None = None
+    parent_intent: str | None = None
+    requires_clarification: bool | None = None
+    unavailable_reason: str | None = None
+    student: CopilotResponseStudent | None = None
+    sources: list[CopilotResponseSource] = Field(default_factory=list)
+    suggested_questions: list[str] = Field(default_factory=list)
     execution: CopilotExecutionInfo

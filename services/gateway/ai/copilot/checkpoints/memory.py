@@ -3,7 +3,7 @@ from __future__ import annotations
 from datetime import datetime, timedelta, timezone
 from threading import Lock
 
-from services.gateway.ai.copilot.state import SchoolOSAIState
+from services.gateway.ai.copilot.state import SchoolOSAIState, sanitize_state_for_checkpoint
 
 
 class InMemoryCheckpointStore:
@@ -22,7 +22,7 @@ class InMemoryCheckpointStore:
     ) -> None:
         await self.cleanup_expired()
         with self._lock:
-            self._data[(tenant_id, request_id)] = (dict(state), datetime.now(timezone.utc))
+            self._data[(tenant_id, request_id)] = (sanitize_state_for_checkpoint(state), datetime.now(timezone.utc))
 
     async def get(
         self,
@@ -46,7 +46,7 @@ class InMemoryCheckpointStore:
     ) -> None:
         await self.cleanup_expired()
         with self._lock:
-            self._data[(tenant_id, request_id)] = (dict(state), datetime.now(timezone.utc))
+            self._data[(tenant_id, request_id)] = (sanitize_state_for_checkpoint(state), datetime.now(timezone.utc))
 
     async def cleanup_expired(self) -> int:
         if self._retention_days < 0:

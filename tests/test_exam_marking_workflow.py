@@ -420,6 +420,8 @@ def test_rejection_persistence():
             request_id=response.request_id,
             approved=False,
             notes="Rejected in test",
+            current_user_id="teacher-test",
+            current_user_role="teacher",
         )
     )
     settings.copilot_checkpoint_backend = original_backend
@@ -450,6 +452,8 @@ def test_approval_persistence():
             request_id=response.request_id,
             approved=True,
             notes="",
+            current_user_id="teacher",
+            current_user_role="teacher",
         ))
         assert approved.status == "approved"
     settings.copilot_checkpoint_backend = original_backend
@@ -553,6 +557,8 @@ def test_interrupted_batch_resume():
         request_id=resp.request_id,
         message=None,
         structured_input={"resumed": True},
+        current_user_id="teacher",
+        current_user_role="teacher",
     ))
     assert resumed.request_id == resp.request_id
 

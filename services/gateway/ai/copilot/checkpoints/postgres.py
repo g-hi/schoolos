@@ -6,7 +6,7 @@ from uuid import UUID
 from sqlalchemy import delete, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from services.gateway.ai.copilot.state import SchoolOSAIState
+from services.gateway.ai.copilot.state import SchoolOSAIState, sanitize_state_for_checkpoint
 from shared.db.models import CopilotCheckpoint
 
 
@@ -131,6 +131,4 @@ class PostgresCheckpointStore:
 
 
 def _sanitize_state(state: SchoolOSAIState) -> dict:
-    # Persist only workflow state; never persist provider keys or secrets.
-    sanitized = dict(state)
-    return sanitized
+    return sanitize_state_for_checkpoint(state)

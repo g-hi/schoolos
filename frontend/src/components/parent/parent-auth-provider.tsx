@@ -9,7 +9,7 @@ import {
   useState,
   type ReactNode,
 } from "react";
-import { clearParentToken, readParentToken, writeParentToken } from "@/lib/parent-auth";
+import { clearParentAssistantSession, clearParentToken, readParentToken, writeParentToken } from "@/lib/parent-auth";
 import {
   ParentApiError,
   loginParent,
@@ -33,6 +33,7 @@ export function ParentAuthProvider({ children }: { children: ReactNode }) {
   const [token, setToken] = useState<string | null>(() => readParentToken());
 
   const logout = useCallback(() => {
+    clearParentAssistantSession();
     clearParentToken();
     setToken(null);
   }, []);

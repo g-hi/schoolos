@@ -19,7 +19,7 @@ from services.gateway.ai.copilot.providers.base import LLMProvider
 from services.gateway.ai.copilot.state import SchoolOSAIState
 
 
-def build_lesson_planning_graph(provider: LLMProvider):
+def build_lesson_planning_graph(provider: LLMProvider, workflow_context: dict | None = None):
     graph = StateGraph(SchoolOSAIState)
 
     async def lesson_planning_with_provider(state: SchoolOSAIState) -> SchoolOSAIState:

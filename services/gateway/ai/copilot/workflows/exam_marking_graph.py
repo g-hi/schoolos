@@ -46,7 +46,7 @@ def _route_after_intent_exam(state: SchoolOSAIState) -> str:
     return "session_loader"
 
 
-def build_exam_marking_graph(provider: LLMProvider):
+def build_exam_marking_graph(provider: LLMProvider, workflow_context: dict | None = None):
     """
     Build and compile the exam_marking LangGraph workflow.
 

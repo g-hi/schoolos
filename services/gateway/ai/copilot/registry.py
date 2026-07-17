@@ -1,19 +1,20 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import Callable
+from typing import Any, Callable
 
 from services.gateway.ai.copilot.providers.base import LLMProvider
 from services.gateway.ai.copilot.workflows.assessment_generation_graph import build_assessment_generation_graph
 from services.gateway.ai.copilot.workflows.exam_marking_graph import build_exam_marking_graph
 from services.gateway.ai.copilot.workflows.lesson_planning_graph import build_lesson_planning_graph
+from services.gateway.ai.copilot.workflows.parent_assistant_graph import build_parent_assistant_graph
 
 
 @dataclass
 class WorkflowRegistration:
     name: str
     enabled: bool
-    builder: Callable[[LLMProvider], object] | None
+    builder: Callable[[LLMProvider, dict[str, Any] | None], object] | None
 
 
 class WorkflowRegistry:
@@ -33,6 +34,11 @@ class WorkflowRegistry:
                 name="exam_marking",
                 enabled=True,
                 builder=build_exam_marking_graph,
+            ),
+            "parent_assistant": WorkflowRegistration(
+                name="parent_assistant",
+                enabled=True,
+                builder=build_parent_assistant_graph,
             ),
             "parent_communication": WorkflowRegistration("parent_communication", False, None),
             "report_comments": WorkflowRegistration("report_comments", False, None),

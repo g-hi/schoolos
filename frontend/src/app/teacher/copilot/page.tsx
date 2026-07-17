@@ -41,24 +41,6 @@ function getGreeting(date: Date) {
   return "Good evening";
 }
 
-function escapeHtml(value: string) {
-  return value
-    .replace(/&/g, "&amp;")
-    .replace(/</g, "&lt;")
-    .replace(/>/g, "&gt;")
-    .replace(/\"/g, "&quot;")
-    .replace(/'/g, "&#39;");
-}
-
-function renderMarkdownPreview(value: string) {
-  const escaped = escapeHtml(value)
-    .replace(/\*\*(.*?)\*\*/g, "<strong>$1</strong>")
-    .replace(/\*(.*?)\*/g, "<em>$1</em>")
-    .replace(/^\s*[-•]\s+(.*)$/gm, "• $1")
-    .replace(/\n/g, "<br />");
-  return escaped;
-}
-
 function toProgressLabel(currentStep?: string, status?: string) {
   if (status === "pending_review" || status === "approved" || currentStep === "human_approval") return "Ready for review";
   if (currentStep === "validation") return "Validating output";
@@ -275,7 +257,7 @@ export default function TeacherCopilotPage() {
               messages.map((message) => (
                 <div key={message.id} className={`flex ${message.role === "user" ? "justify-end" : "justify-start"}`}>
                   <div className={`max-w-[88%] rounded-3xl px-4 py-3 shadow-sm ${message.role === "user" ? "bg-indigo-600 text-white" : "border border-gray-200 bg-white text-gray-700"}`}>
-                    <div className="text-sm leading-7" dangerouslySetInnerHTML={{ __html: renderMarkdownPreview(message.content) }} />
+                    <p className="whitespace-pre-wrap text-sm leading-7">{message.content}</p>
                     <p className={`mt-2 text-[11px] uppercase tracking-[0.2em] ${message.role === "user" ? "text-indigo-100" : "text-gray-400"}`}>
                       {message.timestamp}
                     </p>

@@ -234,6 +234,56 @@ export interface FamilyTimelineQuery {
   category?: string;
 }
 
+export interface ParentAssistantRunRequest {
+  message: string;
+  conversation_id?: string | null;
+  context?: {
+    active_student_id?: string | null;
+  };
+}
+
+export interface ParentAssistantContinueRequest {
+  request_id: string;
+  message?: string;
+  context?: {
+    active_student_id?: string | null;
+  };
+}
+
+export interface ParentAssistantStudentRef {
+  id?: string | null;
+  display_name: string;
+}
+
+export interface ParentAssistantSource {
+  type: string;
+  label: string;
+}
+
+export interface ParentAssistantResponse {
+  status: "completed" | "unavailable" | "needs_clarification" | "unsupported_intent" | "error";
+  request_id: string;
+  conversation_id?: string | null;
+  intent?: string | null;
+  message: string;
+  missing_fields?: string[];
+  clarification_question?: string | null;
+  response_kind?: string | null;
+  parent_intent?: string | null;
+  requires_clarification?: boolean | null;
+  unavailable_reason?: string | null;
+  student?: ParentAssistantStudentRef | null;
+  sources: ParentAssistantSource[];
+  suggested_questions: string[];
+  execution: {
+    workflow: string;
+    current_step: string;
+    validation_passed: boolean;
+    retry_count: number;
+    tenant_slug?: string | null;
+  };
+}
+
 export async function loginParent(email: string, password: string, tenantSlug: string = TENANT): Promise<ParentLoginResponse> {
   return parentRequest<ParentLoginResponse>("/auth/token", {
     method: "POST",
@@ -274,5 +324,27 @@ export async function getFamilyTimeline(query: FamilyTimelineQuery): Promise<Fam
       student_id: query.studentId,
       category: query.category,
     },
+  });
+}
+
+export async function runParentAssistant(token: string, body: ParentAssistantRunRequest): Promise<ParentAssistantResponse> {
+  return parentRequest<ParentAssistantResponse>("/parent/assistant/run", {
+    method: "POST",
+    token,
+    body,
+  });
+}
+
+export async function continueParentAssistant(token: string, body: ParentAssistantContinueRequest): Promise<ParentAssistantResponse> {
+  return parentRequest<ParentAssistantResponse>("/parent/assistant/continue", {
+    method: "POST",
+    token,
+    body,
+  });
+}
+
+export async function getParentAssistantStatus(token: string, requestId: string): Promise<ParentAssistantResponse> {
+  return parentRequest<ParentAssistantResponse>(`/parent/assistant/status/${requestId}`, {
+    token,
   });
 }

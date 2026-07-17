@@ -52,6 +52,8 @@ class CopilotOrchestratorService:
                 "max_retries": settings.copilot_max_retries,
             }
         )
+        if db is not None:
+            state["workflow_db"] = db
 
         response = await self._execute_graph(state)
         store = self._resolve_checkpoint_store(db)
@@ -72,10 +74,18 @@ class CopilotOrchestratorService:
         request_id: str,
         message: str | None,
         structured_input: dict[str, Any],
+        current_user_id: str,
+        current_user_role: str,
+        expected_workflow: str | None = None,
     ) -> CopilotResponse:
         store = self._resolve_checkpoint_store(db)
         previous = await store.get(request_id=request_id, tenant_id=tenant_id, tenant_slug=tenant_slug)
-        if not previous:
+        if not previous or not self._can_access_checkpoint(
+            previous,
+            current_user_id=current_user_id,
+            current_user_role=current_user_role,
+            expected_workflow=expected_workflow,
+        ):
             return self._error_response(request_id, "No workflow state found for this request.")
 
         merged_input = dict(previous.get("structured_input", {}))
@@ -95,6 +105,8 @@ class CopilotOrchestratorService:
         previous["tenant_id"] = tenant_id
         previous["tenant_slug"] = tenant_slug
         previous["intent"] = normalize_intent(previous.get("intent", ""))
+        if db is not None:
+            previous["workflow_db"] = db
 
         response = await self._execute_graph(previous)
         await store.update(request_id=request_id, tenant_id=tenant_id, tenant_slug=tenant_slug, state=previous)
@@ -109,10 +121,18 @@ class CopilotOrchestratorService:
         request_id: str,
         approved: bool,
         notes: str | None,
+        current_user_id: str,
+        current_user_role: str,
+        expected_workflow: str | None = None,
     ) -> CopilotResponse:
         store = self._resolve_checkpoint_store(db)
         previous = await store.get(request_id=request_id, tenant_id=tenant_id, tenant_slug=tenant_slug)
-        if not previous:
+        if not previous or not self._can_access_checkpoint(
+            previous,
+            current_user_id=current_user_id,
+            current_user_role=current_user_role,
+            expected_workflow=expected_workflow,
+        ):
             return self._error_response(request_id, "No workflow state found for this request.")
 
         final = previous.get("final_response", {})
@@ -165,10 +185,18 @@ class CopilotOrchestratorService:
         tenant_id: str,
         tenant_slug: str,
         request_id: str,
+        current_user_id: str,
+        current_user_role: str,
+        expected_workflow: str | None = None,
     ) -> CopilotResponse:
         store = self._resolve_checkpoint_store(db)
         previous = await store.get(request_id=request_id, tenant_id=tenant_id, tenant_slug=tenant_slug)
-        if not previous:
+        if not previous or not self._can_access_checkpoint(
+            previous,
+            current_user_id=current_user_id,
+            current_user_role=current_user_role,
+            expected_workflow=expected_workflow,
+        ):
             return self._error_response(request_id, "No workflow state found for this request.")
 
         final = previous.get("final_response")
@@ -179,6 +207,7 @@ class CopilotOrchestratorService:
 
     async def _execute_graph(self, state: SchoolOSAIState) -> CopilotResponse:
         provider = get_provider()
+        workflow_context: dict[str, Any] = {}
 
         requested_workflow = normalize_intent(state.get("intent", "lesson_planning"))
         state["intent"] = requested_workflow
@@ -190,7 +219,10 @@ class CopilotOrchestratorService:
             return self._error_response(state["request_id"], "No enabled workflow is available.")
 
         try:
-            graph = registration.builder(provider)
+            if requested_workflow == "parent_assistant":
+                workflow_context = {"db": state.get("workflow_db")}
+
+            graph = registration.builder(provider, workflow_context)
             result_state = await graph.ainvoke(state)
             state.update(result_state)
         except Exception as exc:
@@ -224,6 +256,28 @@ class CopilotOrchestratorService:
                 tenant_slug=tenant_slug,
             ),
         )
+
+    def _can_access_checkpoint(
+        self,
+        state: SchoolOSAIState,
+        *,
+        current_user_id: str,
+        current_user_role: str,
+        expected_workflow: str | None,
+    ) -> bool:
+        if state.get("user_id") != current_user_id:
+            return False
+
+        stored_role = str(state.get("user_role", "")).strip().lower()
+        if stored_role and stored_role != current_user_role.strip().lower():
+            return False
+
+        if expected_workflow:
+            stored_workflow = normalize_intent(str(state.get("intent", "")))
+            if stored_workflow != normalize_intent(expected_workflow):
+                return False
+
+        return True
 
     def _resolve_checkpoint_store(self, db: AsyncSession | None) -> CheckpointStore:
         if settings.copilot_checkpoint_backend.lower().strip() == "postgres" and db is not None:

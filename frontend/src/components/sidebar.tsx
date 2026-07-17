@@ -32,6 +32,7 @@ const parentNav = [
   { href: "/parent", label: "Family Hub", icon: "🏠" },
   { href: "/parent/dashboard", label: "Dashboard", icon: "📊" },
   { href: "/parent/family", label: "Family Timeline", icon: "🕒" },
+  { href: "/parent/assistant", label: "Parent Assistant", icon: "🤖" },
 ];
 
 export default function Sidebar() {

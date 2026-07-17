@@ -40,6 +40,7 @@ from services.gateway.routers.exam_marking import router as exam_marking_router
 # Phase 8.1 — Parent Experience
 from services.gateway.routers.auth import router as auth_router
 from services.gateway.routers.parent import router as parent_router
+from services.gateway.routers.parent_assistant import router as parent_assistant_router
 from services.gateway.routers.families import router as families_router
 
 
@@ -171,6 +172,7 @@ app.include_router(exam_marking_router)
 # Phase 8.1 — Parent Experience
 app.include_router(auth_router)
 app.include_router(parent_router)
+app.include_router(parent_assistant_router)
 app.include_router(families_router)
 
 # =============================================================================

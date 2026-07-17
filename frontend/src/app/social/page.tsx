@@ -467,7 +467,7 @@ export default function SocialPage() {
           <li>Alumni & community engagement (AI manages outreach and events)</li>
           <li>Competitor benchmarking (AI compares school performance to others)</li>
         </ul>
-        <div className="mt-2 text-yellow-700 text-sm">These features are planned for future releases to further boost your school's marketing and outreach.</div>
+        <div className="mt-2 text-yellow-700 text-sm">These features are planned for future releases to further boost your school&apos;s marketing and outreach.</div>
       </div>
     </div>
   );

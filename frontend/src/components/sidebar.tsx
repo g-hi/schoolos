@@ -28,10 +28,21 @@ const teacherNav = [
   { href: "/teacher/settings", label: "Settings", icon: "⚙️" },
 ];
 
+const parentNav = [
+  { href: "/parent", label: "Family Hub", icon: "🏠" },
+  { href: "/parent/dashboard", label: "Dashboard", icon: "📊" },
+  { href: "/parent/family", label: "Family Timeline", icon: "🕒" },
+];
+
 export default function Sidebar() {
   const pathname = usePathname();
   const isTeacherRoute = pathname?.startsWith("/teacher") ?? false;
-  const nav = isTeacherRoute ? teacherNav : principalNav;
+  const isParentRoute = pathname?.startsWith("/parent") ?? false;
+  const nav = isTeacherRoute
+    ? teacherNav
+    : isParentRoute
+      ? parentNav
+      : principalNav;
 
   return (
     <aside className="w-64 bg-white border-r border-gray-200 flex flex-col">
@@ -64,11 +75,15 @@ export default function Sidebar() {
       <div className="p-4 border-t border-gray-200">
         <div className="flex items-center gap-3">
           <div className="w-8 h-8 rounded-full bg-indigo-100 flex items-center justify-center text-indigo-600 font-bold text-sm">
-            {isTeacherRoute ? "T" : "P"}
+            {isTeacherRoute ? "T" : isParentRoute ? "PA" : "P"}
           </div>
           <div>
-            <p className="text-sm font-medium">{isTeacherRoute ? "Teacher" : "Principal"}</p>
-            <p className="text-xs text-gray-500">{isTeacherRoute ? "Portal" : "Admin"}</p>
+            <p className="text-sm font-medium">
+              {isTeacherRoute ? "Teacher" : isParentRoute ? "Parent" : "Principal"}
+            </p>
+            <p className="text-xs text-gray-500">
+              {isTeacherRoute ? "Portal" : isParentRoute ? "Family" : "Admin"}
+            </p>
           </div>
         </div>
       </div>

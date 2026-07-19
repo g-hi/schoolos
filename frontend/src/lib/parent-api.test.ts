@@ -1,6 +1,7 @@
 import {
   ParentApiError,
   getParentDashboard,
+  getParentPublishedReportList,
   setParentUnauthorizedHandler,
 } from "@/lib/parent-api";
 
@@ -56,6 +57,23 @@ describe("parent-api", () => {
     );
 
     await expect(getParentDashboard("bad-token")).rejects.toBeInstanceOf(ParentApiError);
+    expect(unauthorizedCalled).toBe(true);
+  });
+
+  it("reuses unauthorized handling for parent weekly reports endpoints", async () => {
+    let unauthorizedCalled = false;
+    setParentUnauthorizedHandler(() => {
+      unauthorizedCalled = true;
+    });
+
+    vi.spyOn(globalThis, "fetch").mockResolvedValue(
+      new Response(JSON.stringify({ detail: "Invalid or expired token." }), {
+        status: 401,
+        headers: { "content-type": "application/json" },
+      }),
+    );
+
+    await expect(getParentPublishedReportList("bad-token", { studentId: "student-1" })).rejects.toBeInstanceOf(ParentApiError);
     expect(unauthorizedCalled).toBe(true);
   });
 });

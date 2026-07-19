@@ -24,5 +24,6 @@ COPY . .
 # Expose the port FastAPI listens on
 EXPOSE 8000
 
-# Start the gateway with hot-reload (development mode)
-CMD ["uvicorn", "services.gateway.main:app", "--host", "0.0.0.0", "--port", "8000", "--reload"]
+# Run Alembic before starting the local development gateway so the database
+# revision stays aligned with the runtime schema.
+CMD ["sh", "-c", "alembic upgrade head && uvicorn services.gateway.main:app --host 0.0.0.0 --port 8000 --reload"]

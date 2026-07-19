@@ -91,6 +91,28 @@ async def resolve_authenticated_parent(
     return current_user
 
 
+async def resolve_authenticated_staff(
+    current_user=Depends(require_role("teacher", "principal", "school_admin")),
+):
+    """
+    FastAPI dependency.
+    Confirms the authenticated user has a staff role allowed for Phase 8.4
+    report operations.
+    """
+    return current_user
+
+
+async def resolve_authenticated_leadership(
+    current_user=Depends(require_role("principal", "school_admin")),
+):
+    """
+    FastAPI dependency.
+    Confirms the authenticated user has a leadership role for report review,
+    approval, publication, and archive actions.
+    """
+    return current_user
+
+
 # ─────────────────────────────────────────────────────────────────────────────
 # resolve_family
 # ─────────────────────────────────────────────────────────────────────────────

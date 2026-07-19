@@ -36,7 +36,7 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from services.gateway.ai.audit import log_action
-from shared.auth.jwt import create_access_token
+from shared.auth.jwt import create_access_token, get_current_user
 from shared.auth.tenant import resolve_tenant
 from shared.db.connection import get_db, set_tenant_context
 from shared.db.models import Tenant, User
@@ -83,7 +83,7 @@ def _get_client_ip(request: Request) -> str:
 # ─────────────────────────────────────────────────────────────────────────────
 
 class TokenRequest(BaseModel):
-    email: str        # Email address of the parent user
+    email: str
     password: str
     tenant_slug: str
 
@@ -92,6 +92,17 @@ class TokenResponse(BaseModel):
     access_token: str
     token_type: str = "bearer"
     expires_in: int  # seconds
+
+
+class MeResponse(BaseModel):
+    user_id: str
+    name: str
+    email: str
+    role: str
+    tenant_id: str
+    tenant_slug: str
+    tenant_name: str
+    is_active: bool
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -197,4 +208,29 @@ async def login(
         access_token=token,
         token_type="bearer",
         expires_in=settings.access_token_expire_minutes * 60,
+    )
+
+
+@router.get(
+    "/me",
+    response_model=MeResponse,
+    summary="Get authenticated user profile",
+    description=(
+        "Returns the authenticated user resolved from the database using "
+        "validated JWT + tenant context."
+    ),
+)
+async def me(
+    current_user=Depends(get_current_user),
+    tenant=Depends(resolve_tenant),
+):
+    return MeResponse(
+        user_id=str(current_user.id),
+        name=current_user.name,
+        email=current_user.email or "",
+        role=current_user.role,
+        tenant_id=str(current_user.tenant_id),
+        tenant_slug=tenant.slug,
+        tenant_name=tenant.name,
+        is_active=bool(current_user.is_active),
     )

@@ -42,6 +42,8 @@ from services.gateway.routers.auth import router as auth_router
 from services.gateway.routers.parent import router as parent_router
 from services.gateway.routers.parent_assistant import router as parent_assistant_router
 from services.gateway.routers.families import router as families_router
+from services.gateway.routers.weekly_reports import router as weekly_reports_router
+from services.gateway.routers.parent_reports import router as parent_reports_router
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -58,72 +60,15 @@ async def lifespan(app: FastAPI):
     from shared.auth.jwt import validate_secret_key_for_environment
     validate_secret_key_for_environment()
 
-    # Auto-create tables (development / test only).
-    # In production, Alembic runs via the Dockerfile CMD before uvicorn starts.
-    # create_all is intentionally disabled in production to prevent silently
-    # mixing DDL methods with Alembic's authoritative schema evolution.
-    import asyncio
-    # Explicit import of the full models module guarantees every ORM class
-    # registers its table with Base.metadata *before* create_all runs.
-    # This is the Alembic-ready pattern: env.py would do the same import.
-    import shared.db.models as _orm_models  # noqa: F401
-    import shared.db.parent_models as _parent_models  # noqa: F401
-    from shared.db.base import Base
-    from shared.db.connection import engine
-
-    # ── Step 1: one-time DDL migrations (best-effort, never blocks startup) ──
-    for attempt in range(3):
-        try:
-            async with engine.begin() as conn:
-                # Drop old duty_assignments table if it has the removed week_start
-                # column so create_all can recreate it with the correct schema.
-                await conn.execute(text("""
-                    DO $$
-                    BEGIN
-                        IF EXISTS (
-                            SELECT 1 FROM information_schema.columns
-                            WHERE table_name = 'duty_assignments'
-                              AND column_name = 'week_start'
-                        ) THEN
-                            DROP TABLE duty_assignments CASCADE;
-                        END IF;
-                    END $$
-                """))
-            break
-        except Exception as e:
-            print(f"DDL migration attempt {attempt + 1}/3 failed: {e}")
-            if attempt < 2:
-                await asyncio.sleep(2)
-
-    # ── Step 2: create all tables (dev/test only; idempotent) ──────────────
+    # Schema evolution is Alembic-managed.
+    # The local Docker gateway container and deployment Dockerfile both run
+    # `alembic upgrade head` before uvicorn starts. Avoid create_all here so
+    # development startup cannot silently create future tables ahead of the
+    # recorded Alembic revision.
     if settings.app_env != "production":
-        for attempt in range(5):
-            try:
-                async with engine.begin() as conn:
-                    await conn.run_sync(Base.metadata.create_all)
-                print(f"Database schema ready — {len(Base.metadata.tables)} tables registered")
-
-                # Seed default tenant if it doesn't exist
-                from shared.db.connection import AsyncSessionLocal
-                from sqlalchemy import select
-                async with AsyncSessionLocal() as db_session:
-                    result = await db_session.execute(select(_orm_models.Tenant).limit(1))
-                    if result.scalar_one_or_none() is None:
-                        db_session.add(_orm_models.Tenant(
-                            name="Greenwood International Academy",
-                            slug="greenwood",
-                        ))
-                        await db_session.commit()
-                print("Database ready")
-                break
-            except Exception as e:
-                print(f"DB create_all attempt {attempt + 1}/5 failed: {e}")
-                if attempt < 4:
-                    await asyncio.sleep(3)
-                else:
-                    print("WARNING: Could not create/verify tables — starting anyway")
+        print("Development mode: schema managed externally by Alembic.")
     else:
-        print("Production mode: schema managed by Alembic. Skipping create_all.")
+        print("Production mode: schema managed by Alembic.")
 
     yield
     # ── Shutdown ─────────────────────────────────────────────────────────────
@@ -174,6 +119,8 @@ app.include_router(auth_router)
 app.include_router(parent_router)
 app.include_router(parent_assistant_router)
 app.include_router(families_router)
+app.include_router(weekly_reports_router)
+app.include_router(parent_reports_router)
 
 # =============================================================================
 # ROUTES

@@ -974,3 +974,6 @@ class QuestionResponse(Base):
 # Explicit import ensures all parent tables are registered with Base.metadata.
 # Uses a named alias to prevent wildcard import and circular-import risks.
 import shared.db.parent_models as _parent_models  # noqa: F401
+
+# -- Weekly Reports models (Phase 8.4) ----------------------------------------
+import shared.db.weekly_report_models as _weekly_report_models  # noqa: F401

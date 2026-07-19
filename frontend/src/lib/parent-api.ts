@@ -1,3 +1,5 @@
+import { readAccessToken, readTenantSlug } from "@/lib/auth";
+
 const API_BASE =
   process.env.NEXT_PUBLIC_API_URL ||
   (process.env.NODE_ENV === "development"
@@ -7,9 +9,11 @@ const TENANT = process.env.NEXT_PUBLIC_TENANT_SLUG || "greenwood";
 
 let unauthorizedHandler: (() => void) | null = null;
 
-export function setParentUnauthorizedHandler(handler: (() => void) | null): void {
+export function setUnauthorizedHandler(handler: (() => void) | null): void {
   unauthorizedHandler = handler;
 }
+
+export const setParentUnauthorizedHandler = setUnauthorizedHandler;
 
 export class ParentApiError extends Error {
   status: number;
@@ -51,10 +55,11 @@ function buildUrl(path: string, params?: RequestOptions["params"]): string {
 
 async function parentRequest<T>(path: string, options?: RequestOptions): Promise<T> {
   const headers = new Headers();
-  headers.set("X-Tenant-Slug", TENANT);
+  headers.set("X-Tenant-Slug", readTenantSlug() || TENANT);
 
-  if (options?.token) {
-    headers.set("Authorization", `Bearer ${options.token}`);
+  const token = options?.token ?? readAccessToken();
+  if (token) {
+    headers.set("Authorization", `Bearer ${token}`);
   }
 
   if (options?.body !== undefined) {
@@ -284,6 +289,32 @@ export interface ParentAssistantResponse {
   };
 }
 
+export interface ParentPublishedReportListItem {
+  report_id: string;
+  student_id: string;
+  student_display_name: string;
+  class_name: string;
+  week_start: string;
+  week_end: string;
+  title: string;
+  published_at: string;
+}
+
+export interface ParentPublishedReportDetail {
+  report_id: string;
+  student_id: string;
+  student_display_name: string;
+  class_name: string;
+  week_start: string;
+  week_end: string;
+  title: string;
+  sections: Array<{
+    section_type: string;
+    content: string;
+  }>;
+  published_at: string;
+}
+
 export async function loginParent(email: string, password: string, tenantSlug: string = TENANT): Promise<ParentLoginResponse> {
   return parentRequest<ParentLoginResponse>("/auth/token", {
     method: "POST",
@@ -345,6 +376,24 @@ export async function continueParentAssistant(token: string, body: ParentAssista
 
 export async function getParentAssistantStatus(token: string, requestId: string): Promise<ParentAssistantResponse> {
   return parentRequest<ParentAssistantResponse>(`/parent/assistant/status/${requestId}`, {
+    token,
+  });
+}
+
+export async function getParentPublishedReportList(
+  token: string,
+  query?: { studentId?: string },
+): Promise<ParentPublishedReportListItem[]> {
+  return parentRequest<ParentPublishedReportListItem[]>("/parent/reports", {
+    token,
+    params: {
+      student_id: query?.studentId,
+    },
+  });
+}
+
+export async function getParentPublishedReport(token: string, reportId: string): Promise<ParentPublishedReportDetail> {
+  return parentRequest<ParentPublishedReportDetail>(`/parent/reports/${reportId}`, {
     token,
   });
 }

@@ -2,9 +2,12 @@
 
 import Link from "next/link";
 import { usePathname } from "next/navigation";
+import { useAuth } from "@/components/auth/auth-provider";
+import { isLeadershipRole } from "@/lib/auth";
 
 const principalNav = [
   { href: "/", label: "Dashboard", icon: "📊" },
+  { href: "/reports/review", label: "Weekly Reports", icon: "🗂️" },
   { href: "/timetable", label: "Timetable", icon: "📅" },
   { href: "/substitution", label: "Substitution", icon: "🔄" },
   { href: "/duties", label: "Duty Schedule", icon: "🛡️" },
@@ -17,6 +20,7 @@ const principalNav = [
 
 const teacherNav = [
   { href: "/teacher", label: "Dashboard", icon: "📊" },
+  { href: "/teacher/reports", label: "Weekly Reports", icon: "🗂️" },
   { href: "/teacher/my-classes", label: "My Classes", icon: "🏫" },
   { href: "/teacher/lesson-planning", label: "Lesson Planning", icon: "📝" },
   { href: "/teacher/assessment-studio", label: "Assessment Studio", icon: "🧠" },
@@ -31,19 +35,20 @@ const teacherNav = [
 const parentNav = [
   { href: "/parent", label: "Family Hub", icon: "🏠" },
   { href: "/parent/dashboard", label: "Dashboard", icon: "📊" },
+  { href: "/parent/reports", label: "Weekly Reports", icon: "🗂️" },
   { href: "/parent/family", label: "Family Timeline", icon: "🕒" },
   { href: "/parent/assistant", label: "Parent Assistant", icon: "🤖" },
 ];
 
 export default function Sidebar() {
   const pathname = usePathname();
-  const isTeacherRoute = pathname?.startsWith("/teacher") ?? false;
-  const isParentRoute = pathname?.startsWith("/parent") ?? false;
-  const nav = isTeacherRoute
-    ? teacherNav
-    : isParentRoute
-      ? parentNav
-      : principalNav;
+  const { user, logout } = useAuth();
+  const role = user?.role;
+
+  const nav = role === "parent" ? parentNav : role === "teacher" ? teacherNav : isLeadershipRole(role) ? principalNav : [];
+  const roleBadge = role === "parent" ? "PA" : role === "teacher" ? "T" : "P";
+  const roleLabel = role === "parent" ? "Parent" : role === "teacher" ? "Teacher" : isLeadershipRole(role) ? "Leadership" : "Unknown";
+  const roleDetail = role === "parent" ? "Family" : role === "teacher" ? "Portal" : isLeadershipRole(role) ? "Admin" : "Access";
 
   return (
     <aside className="w-64 bg-white border-r border-gray-200 flex flex-col">
@@ -74,18 +79,23 @@ export default function Sidebar() {
         })}
       </nav>
       <div className="p-4 border-t border-gray-200">
-        <div className="flex items-center gap-3">
-          <div className="w-8 h-8 rounded-full bg-indigo-100 flex items-center justify-center text-indigo-600 font-bold text-sm">
-            {isTeacherRoute ? "T" : isParentRoute ? "PA" : "P"}
+        <div className="flex items-center justify-between gap-3">
+          <div className="flex items-center gap-3">
+            <div className="w-8 h-8 rounded-full bg-indigo-100 flex items-center justify-center text-indigo-600 font-bold text-sm">
+              {roleBadge}
+            </div>
+            <div>
+              <p className="text-sm font-medium">{roleLabel}</p>
+              <p className="text-xs text-gray-500">{roleDetail}</p>
+            </div>
           </div>
-          <div>
-            <p className="text-sm font-medium">
-              {isTeacherRoute ? "Teacher" : isParentRoute ? "Parent" : "Principal"}
-            </p>
-            <p className="text-xs text-gray-500">
-              {isTeacherRoute ? "Portal" : isParentRoute ? "Family" : "Admin"}
-            </p>
-          </div>
+          <button
+            type="button"
+            onClick={logout}
+            className="rounded-lg border border-gray-300 px-2 py-1 text-xs font-medium text-gray-700 transition hover:bg-gray-50"
+          >
+            Sign out
+          </button>
         </div>
       </div>
     </aside>

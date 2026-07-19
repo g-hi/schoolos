@@ -1,4 +1,12 @@
-export const PARENT_SESSION_TOKEN_KEY = "schoolos.parent.accessToken";
+import {
+  AUTH_TENANT_SLUG_KEY,
+  AUTH_TOKEN_KEY,
+  readTenantSlug,
+  writeTenantSlug,
+} from "@/lib/auth";
+
+export const PARENT_SESSION_TOKEN_KEY = AUTH_TOKEN_KEY;
+export const PARENT_SESSION_TENANT_KEY = AUTH_TENANT_SLUG_KEY;
 export const PARENT_ASSISTANT_REQUEST_ID_KEY = "schoolos.parent.assistant.requestId";
 export const PARENT_ASSISTANT_CONVERSATION_ID_KEY = "schoolos.parent.assistant.conversationId";
 
@@ -21,6 +29,14 @@ export function writeParentToken(token: string): void {
 export function clearParentToken(): void {
   if (typeof window === "undefined") return;
   window.sessionStorage.removeItem(PARENT_SESSION_TOKEN_KEY);
+}
+
+export function readParentTenantSlug(): string {
+  return readTenantSlug();
+}
+
+export function writeParentTenantSlug(tenantSlug: string): void {
+  writeTenantSlug(tenantSlug);
 }
 
 export function readParentAssistantRequestId(): string | null {

@@ -3,9 +3,21 @@ from __future__ import annotations
 import uuid
 from unittest.mock import AsyncMock, MagicMock
 
+import pytest
 from fastapi.testclient import TestClient
 
+from shared.config import settings
 from tests.parent.conftest import make_parent_token, make_parent_user, make_tenant
+
+
+@pytest.fixture(autouse=True)
+def _use_memory_checkpoint_backend():
+    original_backend = settings.copilot_checkpoint_backend
+    settings.copilot_checkpoint_backend = "memory"
+    try:
+        yield
+    finally:
+        settings.copilot_checkpoint_backend = original_backend
 
 
 def _install_parent_assistant_overrides(app, *, tenant, parent, db_session):

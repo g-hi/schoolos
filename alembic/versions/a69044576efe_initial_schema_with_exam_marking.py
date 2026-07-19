@@ -27,26 +27,26 @@ def upgrade() -> None:
                type_=sa.JSON(),
                existing_nullable=False,
                existing_server_default=sa.text("'{}'::jsonb"))
-    op.drop_index(op.f('idx_audit_logs_action'), table_name='audit_logs')
-    op.drop_index(op.f('idx_audit_logs_created_at'), table_name='audit_logs')
-    op.drop_index(op.f('idx_audit_logs_tenant_id'), table_name='audit_logs')
+    op.drop_index(op.f('idx_audit_logs_action'), table_name='audit_logs', if_exists=True)
+    op.drop_index(op.f('idx_audit_logs_created_at'), table_name='audit_logs', if_exists=True)
+    op.drop_index(op.f('idx_audit_logs_tenant_id'), table_name='audit_logs', if_exists=True)
     op.create_index(op.f('ix_audit_logs_action'), 'audit_logs', ['action'], unique=False)
     op.create_index(op.f('ix_audit_logs_created_at'), 'audit_logs', ['created_at'], unique=False)
     op.create_index(op.f('ix_audit_logs_tenant_id'), 'audit_logs', ['tenant_id'], unique=False)
     op.drop_constraint(op.f('classes_tenant_id_grade_section_academic_year_key'), 'classes', type_='unique')
-    op.drop_index(op.f('idx_classes_tenant_id'), table_name='classes')
+    op.drop_index(op.f('idx_classes_tenant_id'), table_name='classes', if_exists=True)
     op.create_index(op.f('ix_classes_tenant_id'), 'classes', ['tenant_id'], unique=False)
     op.create_unique_constraint('uq_class_per_tenant', 'classes', ['tenant_id', 'grade', 'section', 'academic_year'])
-    op.drop_index(op.f('idx_periods_tenant_id'), table_name='periods')
+    op.drop_index(op.f('idx_periods_tenant_id'), table_name='periods', if_exists=True)
     op.create_index(op.f('ix_periods_tenant_id'), 'periods', ['tenant_id'], unique=False)
     op.alter_column('pickup_requests', 'requested_at',
                existing_type=postgresql.TIMESTAMP(timezone=True),
                nullable=False,
                existing_server_default=sa.text('now()'))
-    op.drop_index(op.f('ix_pickup_requests_class'), table_name='pickup_requests')
-    op.drop_index(op.f('ix_pickup_requests_parent'), table_name='pickup_requests')
-    op.drop_index(op.f('ix_pickup_requests_student'), table_name='pickup_requests')
-    op.drop_index(op.f('ix_pickup_requests_tenant'), table_name='pickup_requests')
+    op.drop_index(op.f('ix_pickup_requests_class'), table_name='pickup_requests', if_exists=True)
+    op.drop_index(op.f('ix_pickup_requests_parent'), table_name='pickup_requests', if_exists=True)
+    op.drop_index(op.f('ix_pickup_requests_student'), table_name='pickup_requests', if_exists=True)
+    op.drop_index(op.f('ix_pickup_requests_tenant'), table_name='pickup_requests', if_exists=True)
     op.create_index(op.f('ix_pickup_requests_class_id'), 'pickup_requests', ['class_id'], unique=False)
     op.create_index(op.f('ix_pickup_requests_parent_id'), 'pickup_requests', ['parent_id'], unique=False)
     op.create_index(op.f('ix_pickup_requests_student_id'), 'pickup_requests', ['student_id'], unique=False)
@@ -63,19 +63,19 @@ def upgrade() -> None:
                existing_type=sa.BOOLEAN(),
                nullable=False,
                existing_server_default=sa.text('false'))
-    op.drop_index(op.f('idx_social_mentions_platform'), table_name='social_mentions')
-    op.drop_index(op.f('idx_social_mentions_posted'), table_name='social_mentions')
-    op.drop_index(op.f('idx_social_mentions_processed'), table_name='social_mentions')
-    op.drop_index(op.f('idx_social_mentions_sentiment'), table_name='social_mentions')
-    op.drop_index(op.f('idx_social_mentions_tenant'), table_name='social_mentions')
+    op.drop_index(op.f('idx_social_mentions_platform'), table_name='social_mentions', if_exists=True)
+    op.drop_index(op.f('idx_social_mentions_posted'), table_name='social_mentions', if_exists=True)
+    op.drop_index(op.f('idx_social_mentions_processed'), table_name='social_mentions', if_exists=True)
+    op.drop_index(op.f('idx_social_mentions_sentiment'), table_name='social_mentions', if_exists=True)
+    op.drop_index(op.f('idx_social_mentions_tenant'), table_name='social_mentions', if_exists=True)
     op.create_index(op.f('ix_social_mentions_platform'), 'social_mentions', ['platform'], unique=False)
     op.create_index(op.f('ix_social_mentions_posted_at'), 'social_mentions', ['posted_at'], unique=False)
     op.create_index(op.f('ix_social_mentions_processed'), 'social_mentions', ['processed'], unique=False)
     op.create_index(op.f('ix_social_mentions_sentiment'), 'social_mentions', ['sentiment'], unique=False)
     op.create_index(op.f('ix_social_mentions_tenant_id'), 'social_mentions', ['tenant_id'], unique=False)
-    op.drop_index(op.f('idx_students_tenant_id'), table_name='students')
+    op.drop_index(op.f('idx_students_tenant_id'), table_name='students', if_exists=True)
     op.create_index(op.f('ix_students_tenant_id'), 'students', ['tenant_id'], unique=False)
-    op.drop_index(op.f('idx_subjects_tenant_id'), table_name='subjects')
+    op.drop_index(op.f('idx_subjects_tenant_id'), table_name='subjects', if_exists=True)
     op.drop_constraint(op.f('subjects_tenant_id_code_key'), 'subjects', type_='unique')
     op.create_index(op.f('ix_subjects_tenant_id'), 'subjects', ['tenant_id'], unique=False)
     op.create_unique_constraint('uq_subject_code_per_tenant', 'subjects', ['tenant_id', 'code'])
@@ -83,7 +83,7 @@ def upgrade() -> None:
                existing_type=postgresql.JSONB(astext_type=sa.Text()),
                type_=sa.JSON(),
                existing_nullable=True)
-    op.drop_index(op.f('idx_teachers_tenant_id'), table_name='teachers')
+    op.drop_index(op.f('idx_teachers_tenant_id'), table_name='teachers', if_exists=True)
     op.drop_constraint(op.f('teachers_user_id_key'), 'teachers', type_='unique')
     op.create_index(op.f('ix_teachers_tenant_id'), 'teachers', ['tenant_id'], unique=False)
     op.create_unique_constraint(op.f('uq_teachers_user_id'), 'teachers', ['user_id'])
@@ -99,11 +99,11 @@ def upgrade() -> None:
                type_=sa.JSON(),
                existing_nullable=False,
                existing_server_default=sa.text("'{}'::jsonb"))
-    op.drop_index(op.f('idx_timetable_class_day'), table_name='timetable_entries')
-    op.drop_index(op.f('idx_timetable_teacher_day'), table_name='timetable_entries')
-    op.drop_index(op.f('idx_timetable_tenant_id'), table_name='timetable_entries')
+    op.drop_index(op.f('idx_timetable_class_day'), table_name='timetable_entries', if_exists=True)
+    op.drop_index(op.f('idx_timetable_teacher_day'), table_name='timetable_entries', if_exists=True)
+    op.drop_index(op.f('idx_timetable_tenant_id'), table_name='timetable_entries', if_exists=True)
     op.create_index(op.f('ix_timetable_entries_tenant_id'), 'timetable_entries', ['tenant_id'], unique=False)
-    op.drop_index(op.f('idx_users_tenant_id'), table_name='users')
+    op.drop_index(op.f('idx_users_tenant_id'), table_name='users', if_exists=True)
     op.create_index(op.f('ix_users_tenant_id'), 'users', ['tenant_id'], unique=False)
     # ### end Alembic commands ###
 

@@ -28,9 +28,26 @@ from shared.db.base import Base
 config = context.config
 
 # Override DB URL from environment (Docker / Render inject this)
+def _to_asyncpg_url(url: str) -> str:
+    """Normalize standard PostgreSQL URLs for SQLAlchemy's asyncpg driver."""
+    if url.startswith("postgres://"):
+        return "postgresql+asyncpg://" + url[len("postgres://"):]
+
+    if url.startswith("postgresql://"):
+        return "postgresql+asyncpg://" + url[len("postgresql://"):]
+
+    return url
+
+
 _db_url = os.environ.get("DATABASE_URL")
 if _db_url:
-    config.set_main_option("sqlalchemy.url", _db_url)
+    normalized_url = _to_asyncpg_url(_db_url)
+
+    # Alembic uses ConfigParser, where % has special meaning.
+    config.set_main_option(
+        "sqlalchemy.url",
+        normalized_url.replace("%", "%%"),
+    )
 
 # Logging setup from alembic.ini
 if config.config_file_name is not None:

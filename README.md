@@ -280,9 +280,92 @@ docker compose logs gateway --tail 50
 # Access database
 docker compose exec postgres psql -U schoolos_user -d schoolos
 
+# Stop containers (preserve volumes/data)
+docker compose down
+
 # Stop and wipe all data
 docker compose down -v
 ```
+
+---
+
+## Implementation Status
+
+### Phase Tracker
+
+- Phase 8.4 (Weekly Reports + Unified Login): completed on 2026-07-19
+- Implementation commit: `606b7fd`
+
+### Phase 8.4 Delivered Capabilities
+
+- One unified `/login` page
+- Backend-resolved role routing
+- Parent, Teacher and Principal portal separation
+- Teacher weekly-report authoring
+- Structured staff evidence
+- Optional AI-assisted draft generation
+- Immutable report versions
+- Teacher submission for leadership review
+- Principal review, approval and publication
+- Published parent report access
+- One Family Timeline event per publication
+- Tenant, role, teacher-student and family authorization
+- Optimistic concurrency and deterministic report lifecycle
+- Alembic-managed weekly-report schema
+- No runtime `create_all` schema creation
+
+### Corrected Weekly-Report Lifecycle
+
+Teacher creates report
+-> Teacher edits or generates draft
+-> Teacher submits for review
+-> Principal reviews
+-> Principal approves
+-> Principal publishes
+-> Parent views report
+-> Family Timeline records publication
+
+### Verification Results (Phase 8.4)
+
+Backend:
+
+- Full backend suite: 177 passed, 3 warnings
+- Weekly-report focused verification: 39 passed, 2 warnings
+- `POST /weekly-reports/init` returned HTTP 200
+- Duplicate initialization returned the same logical report without duplicate version/event rows
+- PostgreSQL verification confirmed:
+	- one logical report
+	- one initial immutable version
+	- one `report_initialized` event
+	- review event `report_version_id` matched the persisted version
+
+Frontend:
+
+- Full frontend suite: 59 passed
+- Lint: 0 errors, 19 pre-existing warnings
+- Production build: passed
+
+Manual browser acceptance:
+
+- Teacher logged in and generated a weekly report
+- Teacher submitted it for review
+- Principal logged in, reviewed, approved and published it
+- Parent logged in and found the published report
+- Family Timeline displayed exactly one weekly-report publication event
+
+### Production-Like Defects Fixed During Acceptance
+
+1. Runtime `create_all` created tables before Alembic revision advancement.
+2. Separate staff/parent authentication was consolidated into one role-aware login.
+3. Parent context regression was corrected after browser testing.
+4. RoleGuard/Sidebar hydration mismatch was corrected.
+5. Weekly-report initialization originally inserted the review event before its referenced version.
+6. Failed-session recovery accessed expired ORM attributes and caused `MissingGreenlet`.
+7. Initialization now explicitly flushes:
+	 - report
+	 - version
+	 - review event
+8. Failed transactions roll back before recovery queries and use cached primitive IDs.
 
 ---
 

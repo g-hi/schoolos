@@ -30,21 +30,19 @@ from collections import defaultdict
 from threading import Lock
 
 from fastapi import APIRouter, Depends, HTTPException, Request, status
-from passlib.context import CryptContext
 from pydantic import BaseModel
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from services.gateway.ai.audit import log_action
 from shared.auth.jwt import create_access_token, get_current_user
+from shared.auth.passwords import verify_password
 from shared.auth.tenant import resolve_tenant
 from shared.db.connection import get_db, set_tenant_context
 from shared.db.models import Tenant, User
 
 logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/auth", tags=["Authentication"])
-
-_pwd_context = CryptContext(schemes=["bcrypt"], deprecated="auto")
 
 # ─────────────────────────────────────────────────────────────────────────────
 # Simple in-memory rate limiter
@@ -167,7 +165,7 @@ async def login(
         raise _INVALID_CREDENTIALS
 
     # ── Verify password ───────────────────────────────────────────────────────
-    if not _pwd_context.verify(body.password, user.password_hash):
+    if not verify_password(body.password, user.password_hash):
         logger.warning(
             "auth.login_failed | tenant=%s user_id=%s",
             tenant.slug,

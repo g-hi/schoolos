@@ -26,4 +26,4 @@ EXPOSE 8000
 
 # Run Alembic before starting the local development gateway so the database
 # revision stays aligned with the runtime schema.
-CMD ["sh", "-c", "alembic upgrade head && uvicorn services.gateway.main:app --host 0.0.0.0 --port 8000 --reload"]
+CMD ["sh", "-c", "alembic upgrade head && python scripts/reset_demo_passwords.py && uvicorn services.gateway.main:app --host 0.0.0.0 --port 8000 --reload"]

@@ -44,6 +44,7 @@ from services.gateway.routers.parent_assistant import router as parent_assistant
 from services.gateway.routers.families import router as families_router
 from services.gateway.routers.weekly_reports import router as weekly_reports_router
 from services.gateway.routers.parent_reports import router as parent_reports_router
+from services.gateway.routers.demo_bootstrap import router as demo_bootstrap_router
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -121,6 +122,7 @@ app.include_router(parent_assistant_router)
 app.include_router(families_router)
 app.include_router(weekly_reports_router)
 app.include_router(parent_reports_router)
+app.include_router(demo_bootstrap_router)
 
 # =============================================================================
 # ROUTES

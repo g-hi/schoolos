@@ -71,3 +71,6 @@ packages = ["shared", "services"]
 [tool.pytest.ini_options]
 asyncio_mode = "auto"
 testpaths    = ["tests"]
+markers = [
+    "external_container: tests that require a disposable external Docker container",
+]

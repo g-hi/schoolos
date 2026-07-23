@@ -559,11 +559,83 @@ class Message(Base):
     body:         Mapped[str]            = mapped_column(Text, nullable=False)
     status:       Mapped[str]            = mapped_column(String(20), nullable=False, default="sent")
     error:        Mapped[str | None]     = mapped_column(Text, nullable=True)
+    notification_id: Mapped[uuid.UUID | None] = mapped_column(UUID(as_uuid=True), ForeignKey("notifications.id", ondelete="SET NULL"), nullable=True, index=True)
     created_at:   Mapped[datetime]       = mapped_column(DateTime(timezone=True), server_default=func.now(), index=True)
 
     # Relationships
     recipient: Mapped["User"]           = relationship("User", foreign_keys=[recipient_id])
     student:   Mapped["Student | None"] = relationship("Student")
+
+
+class Announcement(Base):
+    __tablename__ = "announcements"
+
+    id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    tenant_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), ForeignKey("tenants.id", ondelete="CASCADE"), nullable=False, index=True)
+    author_user_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), ForeignKey("users.id", ondelete="RESTRICT"), nullable=False, index=True)
+    title: Mapped[str] = mapped_column(String(255), nullable=False)
+    body: Mapped[str] = mapped_column(Text, nullable=False)
+    status: Mapped[str] = mapped_column(String(20), nullable=False, default="draft", index=True)
+    timezone: Mapped[str] = mapped_column(String(60), nullable=False, default="UTC")
+    scheduled_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True, index=True)
+    published_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True, index=True)
+    archived_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    publication_claimed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True, index=True)
+    publication_claimed_by: Mapped[str | None] = mapped_column(String(100), nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now(), nullable=False, index=True)
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now(), nullable=False, index=True)
+
+    __table_args__ = (
+        CheckConstraint("status IN ('draft','scheduled','publishing','published','archived')", name="valid_announcement_status"),
+    )
+
+
+class AnnouncementTarget(Base):
+    __tablename__ = "announcement_targets"
+
+    id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    tenant_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), ForeignKey("tenants.id", ondelete="CASCADE"), nullable=False, index=True)
+    announcement_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), ForeignKey("announcements.id", ondelete="CASCADE"), nullable=False, index=True)
+    target_type: Mapped[str] = mapped_column(String(20), nullable=False)
+    target_key: Mapped[str] = mapped_column(String(300), nullable=False)
+    grade: Mapped[str | None] = mapped_column(String(50), nullable=True)
+    class_id: Mapped[uuid.UUID | None] = mapped_column(UUID(as_uuid=True), ForeignKey("classes.id", ondelete="CASCADE"), nullable=True, index=True)
+    family_id: Mapped[uuid.UUID | None] = mapped_column(UUID(as_uuid=True), ForeignKey("families.id", ondelete="CASCADE"), nullable=True, index=True)
+    student_id: Mapped[uuid.UUID | None] = mapped_column(UUID(as_uuid=True), ForeignKey("students.id", ondelete="CASCADE"), nullable=True, index=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now(), nullable=False)
+
+    __table_args__ = (
+        CheckConstraint("target_type IN ('school','grade','class','family','student')", name="valid_announcement_target_type"),
+        CheckConstraint("(target_type = 'school' AND grade IS NULL AND class_id IS NULL AND family_id IS NULL AND student_id IS NULL) OR (target_type = 'grade' AND grade IS NOT NULL AND class_id IS NULL AND family_id IS NULL AND student_id IS NULL) OR (target_type = 'class' AND grade IS NULL AND class_id IS NOT NULL AND family_id IS NULL AND student_id IS NULL) OR (target_type = 'family' AND grade IS NULL AND class_id IS NULL AND family_id IS NOT NULL AND student_id IS NULL) OR (target_type = 'student' AND grade IS NULL AND class_id IS NULL AND family_id IS NULL AND student_id IS NOT NULL)", name="valid_announcement_target_shape"),
+        UniqueConstraint("announcement_id", "target_key", name="uq_announcement_target_key"),
+    )
+
+
+class Notification(Base):
+    __tablename__ = "notifications"
+
+    id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    tenant_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), ForeignKey("tenants.id", ondelete="CASCADE"), nullable=False, index=True)
+    recipient_user_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), ForeignKey("users.id", ondelete="CASCADE"), nullable=False, index=True)
+    announcement_id: Mapped[uuid.UUID | None] = mapped_column(UUID(as_uuid=True), ForeignKey("announcements.id", ondelete="CASCADE"), nullable=True, index=True)
+    source_type: Mapped[str] = mapped_column(String(50), nullable=False)
+    source_id: Mapped[uuid.UUID | None] = mapped_column(UUID(as_uuid=True), nullable=True)
+    category: Mapped[str] = mapped_column(String(50), nullable=False)
+    title: Mapped[str] = mapped_column(String(255), nullable=False)
+    body: Mapped[str] = mapped_column(Text, nullable=False)
+    delivery_status: Mapped[str] = mapped_column(String(20), nullable=False, default="pending", index=True)
+    read_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True, index=True)
+    attempt_count: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    last_attempt_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    next_attempt_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    last_error_code: Mapped[str | None] = mapped_column(String(100), nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now(), nullable=False, index=True)
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now(), nullable=False, index=True)
+
+    __table_args__ = (
+        CheckConstraint("delivery_status IN ('pending','delivered','partial','failed','skipped')", name="valid_notification_delivery_status"),
+        UniqueConstraint("announcement_id", "recipient_user_id", name="uq_announcement_notification_recipient"),
+    )
 
 
 # ─────────────────────────────────────────────────────────────────────────────

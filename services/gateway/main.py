@@ -45,6 +45,7 @@ from services.gateway.routers.families import router as families_router
 from services.gateway.routers.weekly_reports import router as weekly_reports_router
 from services.gateway.routers.parent_reports import router as parent_reports_router
 from services.gateway.routers.appointments import router as appointments_router
+from services.gateway.routers.announcements import router as announcements_router
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -123,6 +124,7 @@ app.include_router(families_router)
 app.include_router(weekly_reports_router)
 app.include_router(parent_reports_router)
 app.include_router(appointments_router)
+app.include_router(announcements_router)
 
 # =============================================================================
 # ROUTES

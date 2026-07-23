@@ -52,12 +52,8 @@ def _twilio_send(to_phone: str, body: str, channel: str) -> tuple[bool, str | No
         or not settings.twilio_auth_token
         or settings.twilio_auth_token == "your_auth_token_here"
     ):
-        logger.info(
-            f"[{channel.upper()} - not sent, Twilio not configured]\n"
-            f"  To:   {to_phone}\n"
-            f"  Body: {body}"
-        )
-        return False, "Twilio not configured"
+        logger.info("%s delivery skipped: Twilio not configured", channel.upper())
+        return False, "TWILIO_NOT_CONFIGURED"
 
     try:
         from twilio.rest import Client
@@ -75,9 +71,9 @@ def _twilio_send(to_phone: str, body: str, channel: str) -> tuple[bool, str | No
         if message.sid:
             return True, None
         return False, "No SID returned"
-    except Exception as exc:
-        logger.error(f"Twilio error ({channel}) to {to_phone}: {exc}")
-        return False, str(exc)
+    except Exception:
+        logger.error("Twilio %s delivery failed", channel)
+        return False, "TWILIO_ERROR"
 
 
 def _email_send(to_email: str, subject: str, body: str) -> tuple[bool, str | None]:
@@ -85,13 +81,8 @@ def _email_send(to_email: str, subject: str, body: str) -> tuple[bool, str | Non
     settings = get_settings()
 
     if not settings.sendgrid_api_key or settings.sendgrid_api_key.startswith("SG.xxx"):
-        logger.info(
-            f"[EMAIL - not sent, no SendGrid key]\n"
-            f"  To:      {to_email}\n"
-            f"  Subject: {subject}\n"
-            f"  Body:    {body}"
-        )
-        return False, "SendGrid not configured"
+        logger.info("EMAIL delivery skipped: SendGrid not configured")
+        return False, "SENDGRID_NOT_CONFIGURED"
 
     try:
         from sendgrid import SendGridAPIClient
@@ -108,9 +99,9 @@ def _email_send(to_email: str, subject: str, body: str) -> tuple[bool, str | Non
         if response.status_code in (200, 202):
             return True, None
         return False, f"SendGrid status {response.status_code}"
-    except Exception as exc:
-        logger.error(f"SendGrid error to {to_email}: {exc}")
-        return False, str(exc)
+    except Exception:
+        logger.error("SendGrid email delivery failed")
+        return False, "SENDGRID_ERROR"
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -123,6 +114,7 @@ async def send_to_user(
     message_type: str,
     db: AsyncSession,
     student_id: Optional[uuid.UUID] = None,
+    notification_id: Optional[uuid.UUID] = None,
     email_subject: str = "[SchoolOS] School Notification",
 ) -> Message:
     """
@@ -137,39 +129,39 @@ async def send_to_user(
     if channel == "whatsapp":
         if user.phone:
             success, error = _twilio_send(user.phone, body, "whatsapp")
-            if error == "Twilio not configured":
+            if error == "TWILIO_NOT_CONFIGURED":
                 status = "skipped"
             else:
                 status = "sent" if success else "failed"
         else:
             status = "skipped"
-            error = "No phone number on record"
+            error = "NO_PHONE"
 
     elif channel == "sms":
         if user.phone:
             success, error = _twilio_send(user.phone, body, "sms")
-            if error == "Twilio not configured":
+            if error == "TWILIO_NOT_CONFIGURED":
                 status = "skipped"
             else:
                 status = "sent" if success else "failed"
         else:
             status = "skipped"
-            error = "No phone number on record"
+            error = "NO_PHONE"
 
     elif channel == "email":
         if user.email:
             success, error = _email_send(user.email, email_subject, body)
-            if error == "SendGrid not configured":
+            if error == "SENDGRID_NOT_CONFIGURED":
                 status = "skipped"
             else:
                 status = "sent" if success else "failed"
         else:
             status = "skipped"
-            error = "No email address on record"
+            error = "NO_EMAIL"
 
     else:
         status = "skipped"
-        error = f"Unknown channel '{channel}'"
+        error = "UNKNOWN_CHANNEL"
 
     msg = Message(
         id=uuid.uuid4(),
@@ -181,6 +173,7 @@ async def send_to_user(
         body=body,
         status=status,
         error=error,
+        notification_id=notification_id,
     )
     db.add(msg)
     return msg
@@ -192,6 +185,7 @@ async def send_to_users(
     message_type: str,
     db: AsyncSession,
     student_id: Optional[uuid.UUID] = None,
+    notification_id: Optional[uuid.UUID] = None,
     email_subject: str = "[SchoolOS] School Notification",
 ) -> list[Message]:
     """
@@ -204,6 +198,7 @@ async def send_to_users(
         msg = await send_to_user(
             user, body, message_type, db,
             student_id=student_id,
+            notification_id=notification_id,
             email_subject=email_subject,
         )
         results.append(msg)

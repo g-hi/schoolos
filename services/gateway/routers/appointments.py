@@ -725,7 +725,17 @@ async def get_teacher_appointment(
     appt = result.scalar_one_or_none()
     if not appt:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Appointment not found.")
-    return {"id": str(appt.id), "status": appt.status, "scheduled_start_at": appt.scheduled_start_at.isoformat(), "parent_notes": appt.parent_notes, "staff_notes": appt.staff_notes}
+    return {
+        "id": str(appt.id),
+        "status": appt.status,
+        "scheduled_start_at": appt.scheduled_start_at.isoformat(),
+        "duration_minutes": appt.duration_minutes,
+        "timezone": appt.timezone,
+        "meeting_mode": appt.meeting_mode,
+        "location_or_link": appt.location_or_link,
+        "parent_notes": appt.parent_notes,
+        "staff_notes": appt.staff_notes,
+    }
 
 
 @router.post("/teacher/appointments/{appointment_id}/confirm", summary="Confirm appointment")

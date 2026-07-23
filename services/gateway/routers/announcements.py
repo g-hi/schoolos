@@ -2,10 +2,11 @@ from __future__ import annotations
 
 import uuid
 from datetime import datetime, timezone
+from typing import Literal
 
 from fastapi import APIRouter, Depends, HTTPException, Query, status
 from pydantic import BaseModel, ConfigDict, field_validator, model_validator
-from sqlalchemy import delete, select
+from sqlalchemy import delete, func, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from services.gateway.ai.audit import log_action
@@ -21,7 +22,8 @@ from services.gateway.announcements import (
 from shared.auth.dependencies import resolve_authenticated_leadership, resolve_authenticated_parent, resolve_family
 from shared.auth.tenant import resolve_tenant
 from shared.db.connection import get_db, set_tenant_context
-from shared.db.models import Announcement, AnnouncementTarget, Notification, Tenant, User
+from shared.db.models import Announcement, AnnouncementTarget, Class, Notification, Student, StudentParent, Tenant, User
+from shared.db.parent_models import Family
 
 router = APIRouter(prefix="", tags=["Announcements"])
 
@@ -66,6 +68,17 @@ class AnnouncementUpdateRequest(BaseModel):
     targets: list[AnnouncementTargetRequest] | None = None
 
 
+class AnnouncementTargetOptionResponse(BaseModel):
+    target_type: Literal["grade", "class", "family", "student"]
+    target_value: str
+    label: str
+    secondary_label: str | None = None
+
+
+class AnnouncementTargetOptionsResponse(BaseModel):
+    items: list[AnnouncementTargetOptionResponse]
+
+
 def _announcement_response(announcement: Announcement) -> dict:
     return {"id": str(announcement.id), "title": announcement.title, "body": announcement.body, "status": announcement.status, "timezone": announcement.timezone, "scheduled_at": announcement.scheduled_at, "published_at": announcement.published_at, "archived_at": announcement.archived_at, "created_at": announcement.created_at, "updated_at": announcement.updated_at}
 
@@ -84,6 +97,164 @@ def _target_key_from_request(request: AnnouncementTargetRequest) -> str:
     if request.target_type == "family":
         return f"family:{request.family_id}"
     return f"student:{request.student_id}"
+
+
+def _search_matches(*parts: str | None, search: str | None) -> bool:
+    if search is None:
+        return True
+    for part in parts:
+        if part is not None and search in part.casefold():
+            return True
+    return False
+
+
+def _dedupe_sorted(values: list[str]) -> list[str]:
+    return sorted(set(values))
+
+
+@router.get("/announcements/target-options", response_model=AnnouncementTargetOptionsResponse, summary="List announcement target options")
+async def list_announcement_target_options(
+    target_type: Literal["grade", "class", "family", "student"] = Query(...),
+    q: str | None = Query(default=None),
+    grade: str | None = Query(default=None),
+    class_id: uuid.UUID | None = Query(default=None),
+    limit: int = Query(default=50, ge=1, le=100),
+    tenant: Tenant = Depends(resolve_tenant),
+    actor: User = Depends(resolve_authenticated_leadership),
+    db: AsyncSession = Depends(get_db),
+):
+    await set_tenant_context(db, tenant.id)
+    search = q.strip().casefold() if q and q.strip() else None
+    grade_filter = grade if grade else None
+    class_filter = class_id
+    limit_value = limit
+    items: list[AnnouncementTargetOptionResponse] = []
+
+    if target_type == "grade":
+        stmt = select(Class.grade, Class.section).where(Class.tenant_id == tenant.id)
+        if grade_filter is not None:
+            stmt = stmt.where(Class.grade == grade_filter)
+        if class_filter is not None:
+            stmt = stmt.where(Class.id == class_filter)
+        rows = (await db.execute(stmt.order_by(Class.grade.asc(), Class.section.asc(), Class.id.asc()))).all()
+        grouped: dict[str, list[str]] = {}
+        for grade_value, section in rows:
+            grouped.setdefault(grade_value, []).append(section)
+        for grade_value in sorted(grouped.keys()):
+            sections = _dedupe_sorted([section for section in grouped[grade_value] if section])
+            secondary_label = ", ".join(sections) if sections else None
+            if not _search_matches(grade_value, secondary_label, search=search):
+                continue
+            items.append(
+                AnnouncementTargetOptionResponse(
+                    target_type="grade",
+                    target_value=grade_value,
+                    label=grade_value,
+                    secondary_label=secondary_label,
+                )
+            )
+
+    elif target_type == "class":
+        stmt = select(Class.id, Class.grade, Class.section, Class.academic_year).where(Class.tenant_id == tenant.id)
+        if grade_filter is not None:
+            stmt = stmt.where(Class.grade == grade_filter)
+        if class_filter is not None:
+            stmt = stmt.where(Class.id == class_filter)
+        rows = (await db.execute(stmt.order_by(Class.grade.asc(), Class.section.asc(), Class.id.asc()))).all()
+        for class_uuid, grade_value, section, academic_year in rows:
+            label = f"{grade_value} {section}"
+            secondary_label = academic_year
+            if not _search_matches(label, secondary_label, search=search):
+                continue
+            items.append(
+                AnnouncementTargetOptionResponse(
+                    target_type="class",
+                    target_value=str(class_uuid),
+                    label=label,
+                    secondary_label=secondary_label,
+                )
+            )
+
+    elif target_type == "family":
+        stmt = (
+            select(Family.id, Family.name, Student.name, Class.grade, Class.section)
+            .join(StudentParent, StudentParent.family_id == Family.id)
+            .join(Student, Student.id == StudentParent.student_id)
+            .join(Class, Class.id == Student.class_id)
+            .where(
+                Family.tenant_id == tenant.id,
+                Family.is_active.is_(True),
+                Student.tenant_id == tenant.id,
+                Class.tenant_id == tenant.id,
+            )
+        )
+        if grade_filter is not None:
+            stmt = stmt.where(Class.grade == grade_filter)
+        if class_filter is not None:
+            stmt = stmt.where(Student.class_id == class_filter)
+        rows = (await db.execute(stmt.order_by(Family.name.asc(), Family.id.asc(), Student.name.asc()))).all()
+        grouped: dict[uuid.UUID, dict[str, list[str] | str]] = {}
+        for family_id, family_name, student_name, class_grade, class_section in rows:
+            record = grouped.setdefault(family_id, {"label": family_name, "students": [], "classes": []})
+            students = record["students"]
+            classes = record["classes"]
+            if student_name not in students:
+                students.append(student_name)
+            class_label = f"{class_grade} {class_section}"
+            if class_label not in classes:
+                classes.append(class_label)
+        for family_id, record in sorted(grouped.items(), key=lambda item: (str(item[1]["label"]).casefold(), str(item[0]))):
+            label = str(record["label"])
+            secondary_label = ", ".join(_dedupe_sorted([*record["students"], *record["classes"]])) or None
+            if not _search_matches(label, secondary_label, search=search):
+                continue
+            items.append(
+                AnnouncementTargetOptionResponse(
+                    target_type="family",
+                    target_value=str(family_id),
+                    label=label,
+                    secondary_label=secondary_label,
+                )
+            )
+
+    else:
+        stmt = (
+            select(Student.id, Student.name, Class.grade, Class.section, Family.name)
+            .join(Class, Class.id == Student.class_id)
+            .join(StudentParent, StudentParent.student_id == Student.id)
+            .join(Family, Family.id == StudentParent.family_id)
+            .where(
+                Student.tenant_id == tenant.id,
+                Class.tenant_id == tenant.id,
+                StudentParent.family_id.is_not(None),
+            )
+        )
+        if grade_filter is not None:
+            stmt = stmt.where(Class.grade == grade_filter)
+        if class_filter is not None:
+            stmt = stmt.where(Student.class_id == class_filter)
+        rows = (await db.execute(stmt.order_by(Student.name.asc(), Student.id.asc()))).all()
+        seen: set[uuid.UUID] = set()
+        for student_id, student_name, class_grade, class_section, family_name in rows:
+            if student_id in seen:
+                continue
+            seen.add(student_id)
+            label = student_name
+            secondary_label = f"{class_grade} {class_section}"
+            if family_name:
+                secondary_label = f"{secondary_label} · {family_name}"
+            if not _search_matches(label, secondary_label, search=search):
+                continue
+            items.append(
+                AnnouncementTargetOptionResponse(
+                    target_type="student",
+                    target_value=str(student_id),
+                    label=label,
+                    secondary_label=secondary_label,
+                )
+            )
+
+    return {"items": items[:limit_value]}
 
 
 async def _create_targets(db: AsyncSession, tenant_id: uuid.UUID, announcement_id: uuid.UUID, targets: list[AnnouncementTargetRequest]) -> None:
@@ -238,6 +409,19 @@ async def list_parent_notifications(read: bool | None = None, page: int = Query(
         query = query.where(Notification.read_at.is_(None))
     rows = (await db.execute(query)).scalars().all()
     return {"items": [{"id": str(row.id), "announcement_id": str(row.announcement_id) if row.announcement_id else None, "title": row.title, "body": row.body, "read_at": row.read_at, "delivery_status": row.delivery_status} for row in rows], "page": page, "page_size": page_size}
+
+
+@router.get("/parent/notifications/unread-count")
+async def get_parent_unread_notification_count(tenant: Tenant = Depends(resolve_tenant), parent: User = Depends(resolve_authenticated_parent), db: AsyncSession = Depends(get_db)):
+    await set_tenant_context(db, tenant.id)
+    unread_count = (await db.execute(
+        select(func.count(Notification.id)).where(
+            Notification.tenant_id == tenant.id,
+            Notification.recipient_user_id == parent.id,
+            Notification.read_at.is_(None),
+        )
+    )).scalar_one()
+    return {"unread_count": unread_count}
 
 
 @router.post("/parent/notifications/{notification_id}/read")

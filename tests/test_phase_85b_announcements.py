@@ -9,7 +9,8 @@ from types import SimpleNamespace
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
-from fastapi import HTTPException
+from fastapi import FastAPI, HTTPException
+from fastapi.testclient import TestClient
 from pydantic import ValidationError
 
 from services.gateway.announcements import (
@@ -24,7 +25,11 @@ from services.gateway.announcements import (
     validate_transition,
     publish_announcement,
 )
-from services.gateway.routers.announcements import AnnouncementCreateRequest, AnnouncementTargetRequest, list_parent_notifications, mark_all_parent_notifications_read
+from services.gateway.routers.announcements import router as announcements_router
+from services.gateway.routers.announcements import AnnouncementCreateRequest, AnnouncementTargetRequest, list_announcement_target_options, list_parent_notifications, mark_all_parent_notifications_read
+from shared.auth.dependencies import resolve_authenticated_leadership, resolve_authenticated_parent
+from shared.auth.tenant import resolve_tenant
+from shared.db.connection import get_db
 from shared.db.models import Announcement, AnnouncementTarget, Notification
 
 
@@ -163,6 +168,58 @@ def test_communication_routes_require_leadership_dependency() -> None:
         assert resolve_authenticated_leadership in dependency_calls
 
 
+def test_announcement_target_options_route_requires_leadership_dependency() -> None:
+    route = next((r for r in announcements_router.routes if getattr(r, "path", None) == "/announcements/target-options" and "GET" in getattr(r, "methods", set())), None)
+    assert route is not None
+    dependency_calls = {dep.call for dep in route.dependant.dependencies}
+    assert resolve_authenticated_leadership in dependency_calls
+
+
+def test_target_options_request_resolves_static_route() -> None:
+    tenant_id = uuid.uuid4()
+    db = AsyncMock()
+    db.execute.return_value = result(rows=[("Grade 1", "A"), ("Grade 1", "B")])
+
+    app = FastAPI()
+    app.include_router(announcements_router)
+
+    async def _mock_get_db():
+        yield db
+
+    app.dependency_overrides[get_db] = _mock_get_db
+    app.dependency_overrides[resolve_tenant] = lambda: SimpleNamespace(id=tenant_id)
+    app.dependency_overrides[resolve_authenticated_leadership] = lambda: SimpleNamespace(id=uuid.uuid4(), role="principal")
+    try:
+        with TestClient(app, raise_server_exceptions=False) as client:
+            response = client.get("/announcements/target-options", params={"target_type": "grade"})
+        assert response.status_code == 200
+        assert response.json()["items"][0]["target_value"] == "Grade 1"
+    finally:
+        app.dependency_overrides.clear()
+
+
+def test_target_options_request_denies_non_leadership() -> None:
+    tenant_id = uuid.uuid4()
+    app = FastAPI()
+    app.include_router(announcements_router)
+
+    async def _mock_get_db():
+        yield AsyncMock()
+
+    async def _deny_leadership():
+        raise HTTPException(status_code=403, detail="Forbidden")
+
+    app.dependency_overrides[get_db] = _mock_get_db
+    app.dependency_overrides[resolve_tenant] = lambda: SimpleNamespace(id=tenant_id)
+    app.dependency_overrides[resolve_authenticated_leadership] = _deny_leadership
+    try:
+        with TestClient(app, raise_server_exceptions=False) as client:
+            response = client.get("/announcements/target-options", params={"target_type": "grade"})
+        assert response.status_code == 403
+    finally:
+        app.dependency_overrides.clear()
+
+
 @pytest.mark.asyncio
 async def test_recipient_resolution_deduplicates_parent_across_children_and_targets() -> None:
     tenant_id = uuid.uuid4()
@@ -274,6 +331,7 @@ async def test_publication_creates_snapshot_once_and_writes_audit_and_timeline()
     notification = Notification(id=uuid.uuid4(), tenant_id=tenant_id, announcement_id=announcement_id, recipient_user_id=parent_id, title="Closure", body="School is closed")
     db = AsyncMock()
     db.begin = lambda: Transaction([])
+    db.get_bind = MagicMock(return_value=MagicMock())
     db.add = MagicMock()
     db.execute.side_effect = [
         result(scalar=announcement),
@@ -354,6 +412,7 @@ async def test_publish_accepts_publishing_state_and_clears_claim_fields() -> Non
     target = AnnouncementTarget(id=uuid.uuid4(), tenant_id=tenant_id, announcement_id=announcement.id, target_type="school", target_key="school")
     db = AsyncMock()
     db.begin = lambda: Transaction([])
+    db.get_bind = MagicMock(return_value=MagicMock())
     db.add = MagicMock()
     db.execute.side_effect = [result(scalar=announcement), result(rows=[target]), result(rows=[])]
     with (
@@ -402,3 +461,207 @@ def test_notification_snapshot_has_one_announcement_recipient_key() -> None:
 def test_parent_create_request_rejects_unknown_fields() -> None:
     with pytest.raises(ValidationError):
         AnnouncementCreateRequest(title="Title", body="Body", targets=[{"target_type": "school"}], author_user_id=uuid.uuid4())
+
+
+def test_parent_notifications_unread_count_route_requires_parent_dependency() -> None:
+    from services.gateway.routers.announcements import router
+    from shared.auth.dependencies import resolve_authenticated_parent
+
+    route = next((r for r in router.routes if getattr(r, "path", None) == "/parent/notifications/unread-count" and "GET" in getattr(r, "methods", set())), None)
+    assert route is not None
+    dependency_calls = {dep.call for dep in route.dependant.dependencies}
+    assert resolve_authenticated_parent in dependency_calls
+
+
+def test_parent_role_dependency_denies_non_parent_for_unread_count() -> None:
+    from shared.auth.dependencies import require_role
+    import asyncio
+
+    dependency = require_role("parent")
+    asyncio.run(dependency(current_user=SimpleNamespace(role="parent")))
+    with pytest.raises(HTTPException) as exc:
+        asyncio.run(dependency(current_user=SimpleNamespace(role="teacher")))
+    assert exc.value.status_code == 403
+
+
+@pytest.mark.asyncio
+async def test_parent_unread_count_returns_zero_when_no_unread() -> None:
+    from services.gateway.routers.announcements import get_parent_unread_notification_count
+
+    tenant_id = uuid.uuid4()
+    parent_id = uuid.uuid4()
+    db = AsyncMock()
+    db.execute.return_value = result(scalar=0)
+    with patch("services.gateway.routers.announcements.set_tenant_context", new=AsyncMock()):
+        response = await get_parent_unread_notification_count(
+            tenant=SimpleNamespace(id=tenant_id),
+            parent=SimpleNamespace(id=parent_id),
+            db=db,
+        )
+    assert response == {"unread_count": 0}
+
+
+@pytest.mark.asyncio
+async def test_announcement_target_options_return_expected_target_value_formats() -> None:
+    tenant_id = uuid.uuid4()
+    db = AsyncMock()
+    class_id = uuid.uuid4()
+    family_id = uuid.uuid4()
+    student_id = uuid.uuid4()
+    app = FastAPI()
+    app.include_router(announcements_router)
+
+    async def _mock_get_db():
+        yield db
+
+    app.dependency_overrides[get_db] = _mock_get_db
+    app.dependency_overrides[resolve_tenant] = lambda: SimpleNamespace(id=tenant_id)
+    app.dependency_overrides[resolve_authenticated_leadership] = lambda: SimpleNamespace(id=uuid.uuid4(), role="principal")
+    db.execute.side_effect = [
+        result(rows=[("Grade 1", "A"), ("Grade 1", "B"), ("Grade 2", "A")]),
+        result(rows=[(class_id, "Grade 1", "A", "2025-2026")]),
+        result(rows=[(family_id, "Family One", "Student One", "Grade 1", "A")]),
+        result(rows=[(student_id, "Student One", "Grade 1", "A", "Family One")]),
+    ]
+    try:
+        with patch("services.gateway.routers.announcements.set_tenant_context", new=AsyncMock()):
+            with TestClient(app, raise_server_exceptions=False) as client:
+                grade_response = client.get("/announcements/target-options", params={"target_type": "grade"})
+                class_response = client.get("/announcements/target-options", params={"target_type": "class"})
+                family_response = client.get("/announcements/target-options", params={"target_type": "family"})
+                student_response = client.get("/announcements/target-options", params={"target_type": "student"})
+
+        assert grade_response.status_code == 200
+        assert grade_response.json()["items"][0]["target_type"] == "grade"
+        assert grade_response.json()["items"][0]["target_value"] == "Grade 1"
+        assert grade_response.json()["items"][0]["label"] == "Grade 1"
+        assert grade_response.json()["items"][0]["secondary_label"] == "A, B"
+
+        assert class_response.status_code == 200
+        assert class_response.json()["items"][0]["target_value"] == str(class_id)
+        assert family_response.status_code == 200
+        assert family_response.json()["items"][0]["target_value"] == str(family_id)
+        assert student_response.status_code == 200
+        assert student_response.json()["items"][0]["target_value"] == str(student_id)
+    finally:
+        app.dependency_overrides.clear()
+
+
+@pytest.mark.asyncio
+async def test_announcement_target_options_apply_search_filters_and_limit() -> None:
+    tenant_id = uuid.uuid4()
+    db = AsyncMock()
+    db.execute.return_value = result(rows=[(uuid.uuid4(), "Student Alpha", "Grade 1", "A", "Family Alpha"), (uuid.uuid4(), "Student Beta", "Grade 1", "B", "Family Beta")])
+    app = FastAPI()
+    app.include_router(announcements_router)
+
+    async def _mock_get_db():
+        yield db
+
+    app.dependency_overrides[get_db] = _mock_get_db
+    app.dependency_overrides[resolve_tenant] = lambda: SimpleNamespace(id=tenant_id)
+    app.dependency_overrides[resolve_authenticated_leadership] = lambda: SimpleNamespace(id=uuid.uuid4(), role="principal")
+    try:
+        with patch("services.gateway.routers.announcements.set_tenant_context", new=AsyncMock()):
+            with TestClient(app, raise_server_exceptions=False) as client:
+                response = client.get("/announcements/target-options", params={"target_type": "student", "q": "alpha", "limit": 1})
+        assert response.status_code == 200
+        assert len(response.json()["items"]) == 1
+        assert response.json()["items"][0]["label"] == "Student Alpha"
+    finally:
+        app.dependency_overrides.clear()
+
+
+@pytest.mark.asyncio
+async def test_announcement_target_options_remain_tenant_scoped() -> None:
+    tenant_id = uuid.uuid4()
+    db = AsyncMock()
+    db.execute.return_value = result(rows=[("Grade 3", "C")])
+    app = FastAPI()
+    app.include_router(announcements_router)
+
+    async def _mock_get_db():
+        yield db
+
+    app.dependency_overrides[get_db] = _mock_get_db
+    app.dependency_overrides[resolve_tenant] = lambda: SimpleNamespace(id=tenant_id)
+    app.dependency_overrides[resolve_authenticated_leadership] = lambda: SimpleNamespace(id=uuid.uuid4(), role="school_admin")
+    try:
+        with patch("services.gateway.routers.announcements.set_tenant_context", new=AsyncMock()):
+            with TestClient(app, raise_server_exceptions=False) as client:
+                response = client.get("/announcements/target-options", params={"target_type": "grade"})
+        assert response.status_code == 200
+        statement = db.execute.call_args.args[0]
+        rendered = str(statement.compile(compile_kwargs={"literal_binds": True})).upper()
+        assert "TENANT_ID" in rendered
+    finally:
+        app.dependency_overrides.clear()
+
+
+@pytest.mark.asyncio
+async def test_parent_unread_count_excludes_read_and_isolation_filters() -> None:
+    from services.gateway.routers.announcements import get_parent_unread_notification_count
+
+    tenant_id = uuid.uuid4()
+    parent_id = uuid.uuid4()
+    db = AsyncMock()
+    db.execute.return_value = result(scalar=3)
+    with patch("services.gateway.routers.announcements.set_tenant_context", new=AsyncMock()):
+        response = await get_parent_unread_notification_count(
+            tenant=SimpleNamespace(id=tenant_id),
+            parent=SimpleNamespace(id=parent_id),
+            db=db,
+        )
+    assert response == {"unread_count": 3}
+    statement = db.execute.call_args.args[0]
+    rendered = str(statement.compile(compile_kwargs={"literal_binds": True})).upper()
+    assert "COUNT(" in rendered
+    assert "TENANT_ID" in rendered
+    assert "RECIPIENT_USER_ID" in rendered
+    assert "READ_AT IS NULL" in rendered
+
+
+def test_unread_count_request_route_resolves_static_endpoint_not_dynamic() -> None:
+    tenant_id = uuid.uuid4()
+    parent_id = uuid.uuid4()
+    db = AsyncMock()
+    db.execute.return_value = result(scalar=0)
+
+    app = FastAPI()
+    app.include_router(announcements_router)
+
+    async def _mock_get_db():
+        yield db
+
+    app.dependency_overrides[get_db] = _mock_get_db
+    app.dependency_overrides[resolve_tenant] = lambda: SimpleNamespace(id=tenant_id)
+    app.dependency_overrides[resolve_authenticated_parent] = lambda: SimpleNamespace(id=parent_id, role="parent")
+    try:
+        with TestClient(app, raise_server_exceptions=False) as client:
+            response = client.get("/parent/notifications/unread-count")
+        assert response.status_code == 200
+        assert response.json() == {"unread_count": 0}
+    finally:
+        app.dependency_overrides.clear()
+
+
+def test_unread_count_request_denies_non_parent() -> None:
+    tenant_id = uuid.uuid4()
+    app = FastAPI()
+    app.include_router(announcements_router)
+
+    async def _mock_get_db():
+        yield AsyncMock()
+
+    async def _deny_parent():
+        raise HTTPException(status_code=403, detail="Forbidden")
+
+    app.dependency_overrides[get_db] = _mock_get_db
+    app.dependency_overrides[resolve_tenant] = lambda: SimpleNamespace(id=tenant_id)
+    app.dependency_overrides[resolve_authenticated_parent] = _deny_parent
+    try:
+        with TestClient(app, raise_server_exceptions=False) as client:
+            response = client.get("/parent/notifications/unread-count")
+        assert response.status_code == 403
+    finally:
+        app.dependency_overrides.clear()

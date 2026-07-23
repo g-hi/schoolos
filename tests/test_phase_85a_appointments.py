@@ -522,7 +522,19 @@ async def test_linked_parent_creation_persists_requested_appointment() -> None:
 
 @pytest.mark.asyncio
 async def test_teacher_user_mapping_authorizes_assigned_teacher_and_denies_unrelated() -> None:
-        appointment = Appointment(id=uuid.uuid4(), tenant_id=uuid.uuid4(), teacher_id=uuid.uuid4(), status="requested", scheduled_start_at=datetime.now(timezone.utc) + timedelta(hours=1))
+        appointment = Appointment(
+            id=uuid.uuid4(),
+            tenant_id=uuid.uuid4(),
+            teacher_id=uuid.uuid4(),
+            status="requested",
+            scheduled_start_at=datetime.now(timezone.utc) + timedelta(hours=1),
+            duration_minutes=45,
+            timezone="Africa/Nairobi",
+            meeting_mode="video",
+            location_or_link="https://meet.example.com/room-1",
+            parent_notes="Please discuss reading progress",
+            staff_notes="Bring assessment notes",
+        )
         db = AsyncMock()
         db.execute.return_value = _result(scalar=appointment)
         profile = SimpleNamespace(id=appointment.teacher_id)
@@ -532,6 +544,12 @@ async def test_teacher_user_mapping_authorizes_assigned_teacher_and_denies_unrel
         ):
             response = await get_teacher_appointment(appointment.id, tenant=SimpleNamespace(id=appointment.tenant_id), teacher_user=SimpleNamespace(id=uuid.uuid4()), db=db)
         assert response["id"] == str(appointment.id)
+        assert response["duration_minutes"] == 45
+        assert response["timezone"] == "Africa/Nairobi"
+        assert response["meeting_mode"] == "video"
+        assert response["location_or_link"] == "https://meet.example.com/room-1"
+        assert response["parent_notes"] == "Please discuss reading progress"
+        assert response["staff_notes"] == "Bring assessment notes"
 
         with (
             patch("services.gateway.routers.appointments.set_tenant_context", new=AsyncMock()),

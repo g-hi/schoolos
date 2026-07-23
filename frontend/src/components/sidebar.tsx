@@ -1,17 +1,23 @@
 "use client";
 
+import { useEffect, useState } from "react";
 import Link from "next/link";
 import { usePathname } from "next/navigation";
 import { useAuth } from "@/components/auth/auth-provider";
+import { getParentUnreadNotificationCount } from "@/lib/announcements-api";
 import { isLeadershipRole } from "@/lib/auth";
+
+const parentNotificationsUpdatedEvent = "schoolos:parent-notifications-updated";
 
 const principalNav = [
   { href: "/", label: "Dashboard", icon: "📊" },
   { href: "/reports/review", label: "Weekly Reports", icon: "🗂️" },
+  { href: "/appointments", label: "Appointments", icon: "📅" },
   { href: "/timetable", label: "Timetable", icon: "📅" },
   { href: "/substitution", label: "Substitution", icon: "🔄" },
   { href: "/duties", label: "Duty Schedule", icon: "🛡️" },
   { href: "/communication", label: "Communication", icon: "💬" },
+  { href: "/announcements", label: "Announcements", icon: "📣" },
   { href: "/pickup", label: "Pickup", icon: "🚗" },
   { href: "/data", label: "Data Upload", icon: "📁" },
   { href: "/social", label: "Social Media", icon: "📱" },
@@ -21,6 +27,7 @@ const principalNav = [
 const teacherNav = [
   { href: "/teacher", label: "Dashboard", icon: "📊" },
   { href: "/teacher/reports", label: "Weekly Reports", icon: "🗂️" },
+  { href: "/teacher/appointments", label: "Appointments", icon: "📅" },
   { href: "/teacher/my-classes", label: "My Classes", icon: "🏫" },
   { href: "/teacher/lesson-planning", label: "Lesson Planning", icon: "📝" },
   { href: "/teacher/assessment-studio", label: "Assessment Studio", icon: "🧠" },
@@ -35,6 +42,9 @@ const teacherNav = [
 const parentNav = [
   { href: "/parent", label: "Family Hub", icon: "🏠" },
   { href: "/parent/dashboard", label: "Dashboard", icon: "📊" },
+  { href: "/parent/appointments", label: "Appointments", icon: "📅" },
+  { href: "/parent/notifications", label: "Notifications", icon: "🔔" },
+  { href: "/parent/announcements", label: "Announcements", icon: "📣" },
   { href: "/parent/reports", label: "Weekly Reports", icon: "🗂️" },
   { href: "/parent/family", label: "Family Timeline", icon: "🕒" },
   { href: "/parent/assistant", label: "Parent Assistant", icon: "🤖" },
@@ -44,11 +54,44 @@ export default function Sidebar() {
   const pathname = usePathname();
   const { user, logout } = useAuth();
   const role = user?.role;
+  const [unreadCount, setUnreadCount] = useState<number | null>(null);
 
   const nav = role === "parent" ? parentNav : role === "teacher" ? teacherNav : isLeadershipRole(role) ? principalNav : [];
   const roleBadge = role === "parent" ? "PA" : role === "teacher" ? "T" : "P";
   const roleLabel = role === "parent" ? "Parent" : role === "teacher" ? "Teacher" : isLeadershipRole(role) ? "Leadership" : "Unknown";
   const roleDetail = role === "parent" ? "Family" : role === "teacher" ? "Portal" : isLeadershipRole(role) ? "Admin" : "Access";
+
+  useEffect(() => {
+    if (role !== "parent") {
+      return;
+    }
+
+    let active = true;
+
+    async function loadUnreadCount() {
+      try {
+        const response = await getParentUnreadNotificationCount();
+        if (active) {
+          setUnreadCount(response.unread_count);
+        }
+      } catch {
+        if (active) {
+          setUnreadCount(null);
+        }
+      }
+    }
+
+    const handleUpdate = () => {
+      void loadUnreadCount();
+    };
+
+    void loadUnreadCount();
+    window.addEventListener(parentNotificationsUpdatedEvent, handleUpdate);
+    return () => {
+      active = false;
+      window.removeEventListener(parentNotificationsUpdatedEvent, handleUpdate);
+    };
+  }, [role]);
 
   return (
     <aside className="w-64 bg-white border-r border-gray-200 flex flex-col">
@@ -62,6 +105,7 @@ export default function Sidebar() {
             item.href === "/"
               ? pathname === "/"
               : pathname.startsWith(item.href);
+          const showUnreadBadge = role === "parent" && item.href === "/parent/notifications" && unreadCount !== null && unreadCount > 0;
           return (
             <Link
               key={item.href}
@@ -73,7 +117,12 @@ export default function Sidebar() {
               }`}
             >
               <span className="text-lg">{item.icon}</span>
-              {item.label}
+              <span className="flex-1">{item.label}</span>
+              {showUnreadBadge ? (
+                <span aria-label={`Unread notifications: ${unreadCount}`} className="inline-flex min-w-6 items-center justify-center rounded-full bg-rose-600 px-2 py-0.5 text-xs font-semibold text-white">
+                  {unreadCount}
+                </span>
+              ) : null}
             </Link>
           );
         })}

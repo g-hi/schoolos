@@ -91,6 +91,17 @@ async def resolve_authenticated_parent(
     return current_user
 
 
+async def resolve_authenticated_teacher(
+    current_user=Depends(require_role("teacher")),
+):
+    """
+    FastAPI dependency.
+    Confirms the authenticated user has role='teacher' (from DB).
+    Returns the User ORM object.
+    """
+    return current_user
+
+
 async def resolve_authenticated_staff(
     current_user=Depends(require_role("teacher", "principal", "school_admin")),
 ):

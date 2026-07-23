@@ -22,6 +22,7 @@ from sqlalchemy import func, select
 from sqlalchemy.orm import selectinload
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from shared.auth.dependencies import resolve_authenticated_leadership
 from shared.auth.tenant import resolve_tenant
 from shared.db.connection import get_db, set_tenant_context
 from shared.db.models import (
@@ -66,6 +67,7 @@ class BroadcastRequest(BaseModel):
 async def send_daily_digest(
     body: DailyDigestRequest,
     tenant: Tenant = Depends(resolve_tenant),
+    actor: User = Depends(resolve_authenticated_leadership),
     db: AsyncSession = Depends(get_db),
 ):
     """
@@ -215,6 +217,7 @@ async def send_daily_digest(
 async def broadcast(
     body: BroadcastRequest,
     tenant: Tenant = Depends(resolve_tenant),
+    actor: User = Depends(resolve_authenticated_leadership),
     db: AsyncSession = Depends(get_db),
 ):
     """
@@ -326,6 +329,7 @@ async def message_log(
     status: str | None = None,         # filter: sent / failed / skipped
     limit: int = 50,
     tenant: Tenant = Depends(resolve_tenant),
+    actor: User = Depends(resolve_authenticated_leadership),
     db: AsyncSession = Depends(get_db),
 ):
     """
@@ -381,6 +385,7 @@ async def message_log(
 async def message_stats(
     days: int = 7,
     tenant: Tenant = Depends(resolve_tenant),
+    actor: User = Depends(resolve_authenticated_leadership),
     db: AsyncSession = Depends(get_db),
 ):
     """Returns counts by message_type, channel, and status for the last N days."""
@@ -427,6 +432,7 @@ async def message_stats(
 async def list_grades(
     academic_year: str = "2025-2026",
     tenant: Tenant = Depends(resolve_tenant),
+    actor: User = Depends(resolve_authenticated_leadership),
     db: AsyncSession = Depends(get_db),
 ):
     await set_tenant_context(db, tenant.id)
@@ -504,6 +510,7 @@ AGENT_DEFINITIONS = [
 @router.get("/agents", summary="List autonomous agent definitions")
 async def list_agents(
     tenant: Tenant = Depends(resolve_tenant),
+    actor: User = Depends(resolve_authenticated_leadership),
     db: AsyncSession = Depends(get_db),
 ):
     """Returns agent definitions with live message counts from the last 7 days."""

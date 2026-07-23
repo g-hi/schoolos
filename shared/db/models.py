@@ -391,6 +391,57 @@ class AuditLog(Base):
 
 
 # ─────────────────────────────────────────────────────────────────────────────
+# Appointment  (Phase 8.5A — parent/teacher meeting lifecycle)
+# ─────────────────────────────────────────────────────────────────────────────
+
+class Appointment(Base):
+    """
+    Represents a parent-initiated appointment request tied to a student,
+    family, and an eligible teacher-subject option.
+    """
+    __tablename__ = "appointments"
+
+    id:                    Mapped[uuid.UUID]      = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    tenant_id:             Mapped[uuid.UUID]      = mapped_column(UUID(as_uuid=True), ForeignKey("tenants.id", ondelete="CASCADE"), nullable=False, index=True)
+    family_id:             Mapped[uuid.UUID]      = mapped_column(UUID(as_uuid=True), ForeignKey("families.id", ondelete="CASCADE"), nullable=False, index=True)
+    student_id:            Mapped[uuid.UUID]      = mapped_column(UUID(as_uuid=True), ForeignKey("students.id", ondelete="CASCADE"), nullable=False, index=True)
+    parent_id:             Mapped[uuid.UUID]      = mapped_column(UUID(as_uuid=True), ForeignKey("users.id", ondelete="CASCADE"), nullable=False, index=True)
+    teacher_id:            Mapped[uuid.UUID]      = mapped_column(UUID(as_uuid=True), ForeignKey("teachers.id", ondelete="CASCADE"), nullable=False, index=True)
+    subject_id:            Mapped[uuid.UUID | None] = mapped_column(UUID(as_uuid=True), ForeignKey("subjects.id", ondelete="SET NULL"), nullable=True, index=True)
+    timetable_entry_id:    Mapped[uuid.UUID | None] = mapped_column(UUID(as_uuid=True), ForeignKey("timetable_entries.id", ondelete="SET NULL"), nullable=True, index=True)
+    status:                Mapped[str]            = mapped_column(String(20), nullable=False, default="requested", index=True)
+    requested_start_at:    Mapped[datetime]        = mapped_column(DateTime(timezone=True), nullable=False, index=True)
+    scheduled_start_at:    Mapped[datetime]        = mapped_column(DateTime(timezone=True), nullable=False, index=True)
+    duration_minutes:      Mapped[int]            = mapped_column(Integer, nullable=False)
+    timezone:              Mapped[str]            = mapped_column(String(60), nullable=False)
+    meeting_mode:          Mapped[str]            = mapped_column(String(20), nullable=False)
+    location_or_link:      Mapped[str | None]     = mapped_column(Text, nullable=True)
+    reason:                Mapped[str | None]     = mapped_column(Text, nullable=True)
+    parent_notes:          Mapped[str | None]     = mapped_column(Text, nullable=True)
+    staff_notes:           Mapped[str | None]     = mapped_column(Text, nullable=True)
+    created_at:            Mapped[datetime]       = mapped_column(DateTime(timezone=True), server_default=func.now(), nullable=False, index=True)
+    updated_at:            Mapped[datetime]       = mapped_column(DateTime(timezone=True), server_default=func.now(), nullable=False, index=True)
+    confirmed_at:          Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    declined_at:           Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    cancelled_at:          Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    completed_at:          Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    cancelled_by:          Mapped[uuid.UUID | None] = mapped_column(UUID(as_uuid=True), ForeignKey("users.id", ondelete="SET NULL"), nullable=True)
+
+    student: Mapped["Student"] = relationship("Student")
+    teacher: Mapped["Teacher"] = relationship("Teacher")
+    subject: Mapped["Subject | None"] = relationship("Subject")
+    timetable_entry: Mapped["TimetableEntry | None"] = relationship("TimetableEntry")
+    parent: Mapped["User"] = relationship("User", foreign_keys=[parent_id])
+    cancelled_by_user: Mapped["User | None"] = relationship("User", foreign_keys=[cancelled_by])
+
+    __table_args__ = (
+        CheckConstraint("status IN ('requested','confirmed','declined','cancelled','completed')", name="valid_appointment_status"),
+        CheckConstraint("meeting_mode IN ('in_person','video','phone')", name="valid_appointment_meeting_mode"),
+        CheckConstraint("duration_minutes BETWEEN 10 AND 180", name="valid_appointment_duration"),
+    )
+
+
+# ─────────────────────────────────────────────────────────────────────────────
 # TimetableConstraint  (natural-language scheduling rules)
 # ─────────────────────────────────────────────────────────────────────────────
 

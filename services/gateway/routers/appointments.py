@@ -9,6 +9,7 @@ from fastapi import APIRouter, Depends, HTTPException, Query, status
 from pydantic import BaseModel, ConfigDict, field_validator
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy.exc import MultipleResultsFound
 
 from services.gateway.ai.audit import log_action
 from services.gateway.ai.family_timeline import write_timeline_event
@@ -159,8 +160,14 @@ class AppointmentListQuery(BaseModel):
 
 
 async def _resolve_teacher_profile(db: AsyncSession, tenant_id: uuid.UUID, user: User) -> Teacher | None:
-    result = await db.execute(select(Teacher).where(Teacher.tenant_id == tenant_id, Teacher.user_id == user.id))
-    return result.scalar_one_or_none()
+    try:
+        result = await db.execute(select(Teacher).where(Teacher.tenant_id == tenant_id, Teacher.user_id == user.id))
+        return result.scalar_one_or_none()
+    except MultipleResultsFound as exc:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail="Teacher profile data is inconsistent. Contact school administrator.",
+        ) from exc
 
 
 async def _lock_teacher_profile(db: AsyncSession, *, tenant_id: uuid.UUID, teacher_id: uuid.UUID) -> Teacher | None:
@@ -683,7 +690,7 @@ async def reschedule_parent_appointment(
 
 @router.get("/teacher/appointments", summary="List teacher appointments")
 async def list_teacher_appointments(
-    status: str | None = Query(default=None),
+    appointment_status: str | None = Query(default=None, alias="status"),
     date_from: datetime | None = Query(default=None),
     date_to: datetime | None = Query(default=None),
     page: int = Query(default=1, ge=1),
@@ -697,8 +704,8 @@ async def list_teacher_appointments(
     if not teacher_profile:
         raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="You do not have access to this resource.")
     stmt = select(Appointment).where(Appointment.tenant_id == tenant.id, Appointment.teacher_id == teacher_profile.id)
-    if status:
-        stmt = stmt.where(Appointment.status == status)
+    if appointment_status:
+        stmt = stmt.where(Appointment.status == appointment_status)
     if date_from:
         stmt = stmt.where(Appointment.requested_start_at >= date_from)
     if date_to:

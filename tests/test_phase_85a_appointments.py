@@ -8,7 +8,8 @@ from types import SimpleNamespace
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
-from fastapi import HTTPException
+from fastapi import FastAPI, HTTPException
+from fastapi.testclient import TestClient
 from pydantic import ValidationError
 
 from services.gateway.routers.appointments import (
@@ -34,7 +35,11 @@ from services.gateway.routers.appointments import (
     _validate_meeting_mode,
     confirm_teacher_appointment,
     reschedule_parent_appointment,
+    router as appointments_router,
 )
+from shared.auth.dependencies import resolve_authenticated_teacher
+from shared.auth.tenant import resolve_tenant
+from shared.db.connection import get_db
 from shared.db.models import Appointment
 
 
@@ -404,6 +409,37 @@ def _result(*, first=None, scalar=None, rows=None):
         )
 
 
+def _build_teacher_route_client(*, db_session, tenant_id: uuid.UUID, teacher_user_id: uuid.UUID) -> TestClient:
+    app = FastAPI()
+    app.include_router(appointments_router)
+
+    app.dependency_overrides[resolve_tenant] = lambda: SimpleNamespace(id=tenant_id)
+    app.dependency_overrides[resolve_authenticated_teacher] = lambda: SimpleNamespace(id=teacher_user_id, role="teacher")
+
+    async def _override_get_db():
+        return db_session
+
+    app.dependency_overrides[get_db] = _override_get_db
+    return TestClient(app)
+
+
+class _FilteringListSession:
+    def __init__(self, appointments: list[Appointment]):
+        self.appointments = appointments
+
+    async def execute(self, statement):
+        params = statement.compile().params
+        tenant_id = next((value for key, value in params.items() if key.startswith("tenant_id")), None)
+        teacher_id = next((value for key, value in params.items() if key.startswith("teacher_id")), None)
+        rows = [
+            appt
+            for appt in self.appointments
+            if (tenant_id is None or appt.tenant_id == tenant_id)
+            and (teacher_id is None or appt.teacher_id == teacher_id)
+        ]
+        return _result(rows=rows)
+
+
 @pytest.mark.asyncio
 async def test_eligibility_returns_homeroom_and_deduplicated_timetable_options() -> None:
         tenant_id = uuid.uuid4()
@@ -594,6 +630,97 @@ async def test_teacher_and_leadership_views_include_staff_notes() -> None:
         with patch("services.gateway.routers.appointments.set_tenant_context", new=AsyncMock()):
             leadership_view = await list_leadership_appointments(status="confirmed", page=1, page_size=1, tenant=SimpleNamespace(id=appointment.tenant_id), actor=SimpleNamespace(id=uuid.uuid4()), db=db)
         assert leadership_view["items"][0]["staff_notes"] == "private"
+
+
+def test_teacher_list_route_returns_200_with_empty_items_for_valid_teacher_profile() -> None:
+    tenant_id = uuid.uuid4()
+    teacher_user_id = uuid.uuid4()
+    teacher_profile = SimpleNamespace(id=uuid.uuid4())
+    db = AsyncMock()
+    db.execute.return_value = _result(rows=[])
+
+    with (
+        patch("services.gateway.routers.appointments.set_tenant_context", new=AsyncMock()),
+        patch("services.gateway.routers.appointments._resolve_teacher_profile", new=AsyncMock(return_value=teacher_profile)),
+    ):
+        client = _build_teacher_route_client(db_session=db, tenant_id=tenant_id, teacher_user_id=teacher_user_id)
+        response = client.get("/teacher/appointments", params={"page": 1, "page_size": 10})
+
+    assert response.status_code == 200
+    assert response.json() == {"items": [], "page": 1, "page_size": 10}
+
+
+def test_teacher_list_route_returns_controlled_403_when_teacher_profile_missing() -> None:
+    tenant_id = uuid.uuid4()
+    teacher_user_id = uuid.uuid4()
+    db = AsyncMock()
+
+    with (
+        patch("services.gateway.routers.appointments.set_tenant_context", new=AsyncMock()),
+        patch("services.gateway.routers.appointments._resolve_teacher_profile", new=AsyncMock(return_value=None)),
+    ):
+        client = _build_teacher_route_client(db_session=db, tenant_id=tenant_id, teacher_user_id=teacher_user_id)
+        response = client.get("/teacher/appointments", params={"page": 1, "page_size": 10})
+
+    assert response.status_code == 403
+    assert response.json() == {"detail": "You do not have access to this resource."}
+
+
+def test_teacher_list_route_enforces_cross_tenant_isolation() -> None:
+    tenant_id = uuid.uuid4()
+    other_tenant_id = uuid.uuid4()
+    teacher_id = uuid.uuid4()
+    other_teacher_id = uuid.uuid4()
+    teacher_user_id = uuid.uuid4()
+    now = datetime.now(timezone.utc)
+
+    visible = Appointment(
+        id=uuid.uuid4(),
+        tenant_id=tenant_id,
+        teacher_id=teacher_id,
+        status="requested",
+        requested_start_at=now,
+        scheduled_start_at=now,
+        duration_minutes=30,
+        timezone="UTC",
+        meeting_mode="video",
+    )
+    wrong_tenant = Appointment(
+        id=uuid.uuid4(),
+        tenant_id=other_tenant_id,
+        teacher_id=teacher_id,
+        status="requested",
+        requested_start_at=now,
+        scheduled_start_at=now,
+        duration_minutes=30,
+        timezone="UTC",
+        meeting_mode="video",
+    )
+    wrong_teacher = Appointment(
+        id=uuid.uuid4(),
+        tenant_id=tenant_id,
+        teacher_id=other_teacher_id,
+        status="requested",
+        requested_start_at=now,
+        scheduled_start_at=now,
+        duration_minutes=30,
+        timezone="UTC",
+        meeting_mode="video",
+    )
+
+    db = _FilteringListSession([visible, wrong_tenant, wrong_teacher])
+
+    with (
+        patch("services.gateway.routers.appointments.set_tenant_context", new=AsyncMock()),
+        patch("services.gateway.routers.appointments._resolve_teacher_profile", new=AsyncMock(return_value=SimpleNamespace(id=teacher_id))),
+    ):
+        client = _build_teacher_route_client(db_session=db, tenant_id=tenant_id, teacher_user_id=teacher_user_id)
+        response = client.get("/teacher/appointments", params={"page": 1, "page_size": 10})
+
+    assert response.status_code == 200
+    body = response.json()
+    assert len(body["items"]) == 1
+    assert body["items"][0]["id"] == str(visible.id)
 
 
 def test_migration_upgrade_and_downgrade_call_appointments_operations() -> None:

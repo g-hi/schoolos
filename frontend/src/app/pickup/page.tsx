@@ -468,7 +468,7 @@ export default function PickupPage() {
           page: 1,
           page_size: 50,
         },
-        auth.user?.authToken,
+        auth.token,
       );
       setPickups(response.items);
     } catch (error) {
@@ -487,7 +487,7 @@ export default function PickupPage() {
     pickupId: string,
     action: "acknowledge" | "call" | "prepare" | "complete" | "cancel",
   ) {
-    if (!auth.user?.authToken) {
+    if (!auth.token) {
       return;
     }
 
@@ -495,11 +495,11 @@ export default function PickupPage() {
     try {
       let result: PickupRequest;
       if (action === "acknowledge") {
-        result = await acknowledgeLeadershipPickupRequest(pickupId, {}, auth.user.authToken);
+        result = await acknowledgeLeadershipPickupRequest(pickupId, {}, auth.token);
       } else if (action === "call") {
-        result = await callLeadershipPickupRequest(pickupId, {}, auth.user.authToken);
+        result = await callLeadershipPickupRequest(pickupId, {}, auth.token);
       } else if (action === "prepare") {
-        result = await prepareLeadershipPickupRequest(pickupId, {}, auth.user.authToken);
+        result = await prepareLeadershipPickupRequest(pickupId, {}, auth.token);
       } else {
         return; // complete and cancel have separate handlers
       }
@@ -512,7 +512,7 @@ export default function PickupPage() {
   }
 
   async function handleComplete(verificationMethod: string, verificationNote: string) {
-    if (!auth.user?.authToken || !completePickup) {
+    if (!auth.token || !completePickup) {
       return;
     }
 
@@ -521,7 +521,7 @@ export default function PickupPage() {
       const result = await completeLeadershipPickupRequest(
         completePickup.pickup_id,
         { verification_method: verificationMethod, verification_note: verificationNote },
-        auth.user.authToken,
+        auth.token,
       );
       setPickups((current) =>
         current.map((p) => (p.pickup_id === completePickup.pickup_id ? result : p)),
@@ -533,7 +533,7 @@ export default function PickupPage() {
   }
 
   async function handleCancel() {
-    if (!auth.user?.authToken || !cancelPickup) {
+    if (!auth.token || !cancelPickup) {
       return;
     }
 
@@ -542,7 +542,7 @@ export default function PickupPage() {
       const result = await cancelLeadershipPickupRequest(
         cancelPickup.pickup_id,
         {},
-        auth.user.authToken,
+        auth.token,
       );
       setPickups((current) =>
         current.map((p) => (p.pickup_id === cancelPickup.pickup_id ? result : p)),

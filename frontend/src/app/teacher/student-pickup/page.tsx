@@ -239,7 +239,7 @@ export default function StudentPickupPage() {
           page: 1,
           page_size: 50,
         },
-        auth.user?.authToken,
+        auth.token,
       );
       setPickups(response.items);
     } catch (error) {
@@ -258,7 +258,7 @@ export default function StudentPickupPage() {
     pickupId: string,
     action: "acknowledge" | "call" | "prepare",
   ) {
-    if (!auth.user?.authToken) {
+    if (!auth.token) {
       return;
     }
 
@@ -266,11 +266,11 @@ export default function StudentPickupPage() {
     try {
       let result: PickupRequest;
       if (action === "acknowledge") {
-        result = await acknowledgeTeacherPickupRequest(pickupId, {}, auth.user.authToken);
+        result = await acknowledgeTeacherPickupRequest(pickupId, {}, auth.token);
       } else if (action === "call") {
-        result = await callTeacherPickupRequest(pickupId, {}, auth.user.authToken);
+        result = await callTeacherPickupRequest(pickupId, {}, auth.token);
       } else {
-        result = await prepareTeacherPickupRequest(pickupId, {}, auth.user.authToken);
+        result = await prepareTeacherPickupRequest(pickupId, {}, auth.token);
       }
       setPickups((current) =>
         current.map((p) => (p.pickup_id === pickupId ? result : p)),

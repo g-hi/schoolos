@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import uuid
 from unittest.mock import AsyncMock, MagicMock
+from fastapi.testclient import TestClient
 
 import pytest
 
@@ -183,14 +184,17 @@ def test_dashboard_unavailable_modules_return_explicit_state():
     app.dependency_overrides[resolve_or_create_parent_preferences] = lambda: prefs
 
     try:
-        with __import__("fastapi").testclient.TestClient(app, raise_server_exceptions=False) as client:
+        with TestClient(
+            app,
+            raise_server_exceptions=False,
+        ) as client:
             response = client.get(
-                "/parent/dashboard",
+               "/parent/dashboard",
                 headers={
-                    "X-Tenant-Slug": tenant.slug,
-                    "Authorization": f"Bearer {token}",
-                },
-            )
+                  "X-Tenant-Slug": tenant.slug,
+                  "Authorization": f"Bearer {token}",
+               },
+          )
         assert response.status_code == 200, response.text
         data = response.json()
         for module in ["academics", "attendance", "homework", "reports", "messages", "payments"]:
@@ -259,7 +263,7 @@ def test_patch_settings_updates_preferences_structure():
     app.dependency_overrides[resolve_or_create_parent_preferences] = lambda: prefs
 
     try:
-        with __import__("fastapi").testclient.TestClient(app, raise_server_exceptions=False) as client:
+        with TestClient(app, raise_server_exceptions=False) as client:
             response = client.patch(
                 "/parent/settings",
                 json={"theme": "dark", "preferred_language": "ar"},

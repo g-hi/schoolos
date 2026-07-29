@@ -36,6 +36,7 @@ describe("sidebar route mode", () => {
     expect(await screen.findByLabelText("Unread notifications: 3")).toBeInTheDocument();
     expect(screen.getByText("Notifications").closest("a")).toHaveAttribute("href", "/parent/notifications");
     expect(screen.getByText("Announcements").closest("a")).toHaveAttribute("href", "/parent/announcements");
+    expect(screen.getByText("Pickup").closest("a")).toHaveAttribute("href", "/parent/pickup");
     expect(screen.getByText("Weekly Reports").closest("a")).toHaveAttribute("href", "/parent/reports");
 
     mockedUsePathname.mockReturnValue("/teacher");

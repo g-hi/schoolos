@@ -37,11 +37,11 @@ vi.mock("@/lib/teacher-api", () => ({
 const mockAuth = {
   isAuthenticated: true,
   isHydrating: false,
+  token: "mock-token",
   user: {
     id: "leadership-1",
     role: "principal",
     name: "Principal Jones",
-    authToken: "mock-token",
   },
 };
 

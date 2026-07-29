@@ -675,6 +675,16 @@ class PickupRequest(Base):
     early_pickup:      Mapped[bool]             = mapped_column(Boolean, nullable=False, default=False)
     status:            Mapped[str]              = mapped_column(String(50), nullable=False, default="requested", index=True)
     requested_at:      Mapped[datetime]         = mapped_column(DateTime(timezone=True), server_default=func.now(), index=True)
+    acknowledged_at:   Mapped[datetime | None]  = mapped_column(DateTime(timezone=True), nullable=True)
+    called_at:         Mapped[datetime | None]  = mapped_column(DateTime(timezone=True), nullable=True)
+    prepared_at:       Mapped[datetime | None]  = mapped_column(DateTime(timezone=True), nullable=True)
+    completed_at:      Mapped[datetime | None]  = mapped_column(DateTime(timezone=True), nullable=True)
+    cancelled_at:      Mapped[datetime | None]  = mapped_column(DateTime(timezone=True), nullable=True)
+    cancelled_by:      Mapped[uuid.UUID | None] = mapped_column(UUID(as_uuid=True), ForeignKey("users.id", ondelete="SET NULL"), nullable=True)
+    verified_by:       Mapped[uuid.UUID | None] = mapped_column(UUID(as_uuid=True), ForeignKey("users.id", ondelete="SET NULL"), nullable=True)
+    verified_at:       Mapped[datetime | None]  = mapped_column(DateTime(timezone=True), nullable=True)
+    verification_method: Mapped[str | None]     = mapped_column(String(100), nullable=True)
+    verification_note: Mapped[str | None]       = mapped_column(Text, nullable=True)
     released_at:       Mapped[datetime | None]  = mapped_column(DateTime(timezone=True), nullable=True)
     notes:             Mapped[str | None]       = mapped_column(Text, nullable=True)
 
@@ -683,6 +693,8 @@ class PickupRequest(Base):
     student: Mapped["Student"]        = relationship("Student")
     klass:   Mapped["Class"]          = relationship("Class")
     teacher: Mapped["Teacher | None"] = relationship("Teacher", foreign_keys=[teacher_id])
+    cancelled_by_user: Mapped["User | None"] = relationship("User", foreign_keys=[cancelled_by])
+    verified_by_user: Mapped["User | None"] = relationship("User", foreign_keys=[verified_by])
 
 
 # ─────────────────────────────────────────────────────────────────────────────

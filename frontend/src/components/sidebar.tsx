@@ -43,6 +43,7 @@ const parentNav = [
   { href: "/parent", label: "Family Hub", icon: "🏠" },
   { href: "/parent/dashboard", label: "Dashboard", icon: "📊" },
   { href: "/parent/appointments", label: "Appointments", icon: "📅" },
+  { href: "/parent/pickup", label: "Pickup", icon: "🚗" },
   { href: "/parent/notifications", label: "Notifications", icon: "🔔" },
   { href: "/parent/announcements", label: "Announcements", icon: "📣" },
   { href: "/parent/reports", label: "Weekly Reports", icon: "🗂️" },

@@ -191,6 +191,58 @@ export interface ParentStudentsResponse {
   students: ParentStudentSummary[];
 }
 
+export type ParentPickupStatus =
+  | "requested"
+  | "acknowledged"
+  | "called"
+  | "prepared"
+  | "completed"
+  | "cancelled"
+  | "released"
+  | "rejected_outside_geofence";
+
+export interface ParentPickupRequest {
+  pickup_id: string;
+  student_id: string;
+  parent_id: string;
+  class_id: string;
+  teacher_id: string | null;
+  status: ParentPickupStatus;
+  channel: string;
+  requested_at: string | null;
+  acknowledged_at: string | null;
+  called_at: string | null;
+  prepared_at: string | null;
+  completed_at: string | null;
+  cancelled_at: string | null;
+  verified_by: string | null;
+  verified_at: string | null;
+  verification_method: string | null;
+  verification_note: string | null;
+  notes: string | null;
+  within_geofence: boolean;
+  distance_meters: number;
+  early_pickup: boolean;
+}
+
+export interface ParentPickupListResponse {
+  items: ParentPickupRequest[];
+  page: number;
+  page_size: number;
+}
+
+export interface CreateParentPickupRequestBody {
+  student_id: string;
+  command_text: string;
+  channel?: string | null;
+  latitude?: number | null;
+  longitude?: number | null;
+}
+
+export interface CancelParentPickupRequestBody {
+  note?: string | null;
+}
+
 export interface FamilyMember {
   parent_id: string;
   name: string;
@@ -336,6 +388,52 @@ export async function getParentDashboard(token: string): Promise<ParentDashboard
 
 export async function getParentStudents(token: string): Promise<ParentStudentsResponse> {
   return parentRequest<ParentStudentsResponse>("/parent/students", { token });
+}
+
+export async function createParentPickupRequest(
+  body: CreateParentPickupRequestBody,
+  token?: string | null,
+): Promise<ParentPickupRequest> {
+  return parentRequest<ParentPickupRequest>("/parent/pickup-requests", {
+    method: "POST",
+    token,
+    body,
+  });
+}
+
+export async function listParentPickupRequests(
+  query?: { status?: ParentPickupStatus; page?: number; page_size?: number },
+  token?: string | null,
+): Promise<ParentPickupListResponse> {
+  return parentRequest<ParentPickupListResponse>("/parent/pickup-requests", {
+    token,
+    params: {
+      status: query?.status,
+      page: query?.page,
+      page_size: query?.page_size,
+    },
+  });
+}
+
+export async function getParentPickupRequest(
+  pickupId: string,
+  token?: string | null,
+): Promise<ParentPickupRequest> {
+  return parentRequest<ParentPickupRequest>(`/parent/pickup-requests/${pickupId}`, {
+    token,
+  });
+}
+
+export async function cancelParentPickupRequest(
+  pickupId: string,
+  body?: CancelParentPickupRequestBody,
+  token?: string | null,
+): Promise<ParentPickupRequest> {
+  return parentRequest<ParentPickupRequest>(`/parent/pickup-requests/${pickupId}/cancel`, {
+    method: "POST",
+    token,
+    body: body ?? {},
+  });
 }
 
 export async function getParentStudentOverview(token: string, studentId: string): Promise<ParentStudentOverviewResponse> {

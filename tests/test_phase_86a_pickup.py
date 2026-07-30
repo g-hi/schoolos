@@ -70,8 +70,8 @@ class PickupDbStub:
         params = compiled.params
 
         if "FROM teachers" in text:
-            tenant_id = params.get("tenant_id_1")
-            user_id = params.get("user_id_1")
+            tenant_id = params.get("tenant_id_1", params.get("tenant_id_2"))
+            user_id = params.get("user_id_1", params.get("user_id_2"))
             teacher = next((t for t in self.teachers if t.tenant_id == tenant_id and t.user_id == user_id), None)
             return _Result(scalar=teacher)
 
@@ -91,6 +91,15 @@ class PickupDbStub:
             student = self.students.get(student_id)
             if student and student.tenant_id == tenant_id:
                 return _Result(scalar=student)
+            return _Result(scalar=None)
+
+        if "FROM classes" in text and "class_teacher_id =" in text:
+            tenant_id = params.get("tenant_id_1")
+            class_id = params.get("id_1")
+            teacher_id = params.get("class_teacher_id_1")
+            klass = self.classes.get(class_id)
+            if klass and klass.tenant_id == tenant_id and klass.class_teacher_id == teacher_id:
+                return _Result(scalar=klass)
             return _Result(scalar=None)
 
         if "FROM classes" in text and "ORDER BY" not in text:
@@ -134,15 +143,6 @@ class PickupDbStub:
             if parent_id is not None and pickup.parent_id != parent_id:
                 return _Result(scalar=None)
             return _Result(scalar=pickup)
-
-        if "FROM classes" in text and "class_teacher_id" in text:
-            tenant_id = params.get("tenant_id_1")
-            class_id = params.get("id_1")
-            teacher_id = params.get("class_teacher_id_1")
-            klass = self.classes.get(class_id)
-            if klass and klass.tenant_id == tenant_id and klass.class_teacher_id == teacher_id:
-                return _Result(scalar=klass)
-            return _Result(scalar=None)
 
         if "FROM families JOIN student_parents" in text:
             parent_id = params.get("parent_id_1")
@@ -517,6 +517,145 @@ def test_audit_timeline_notification_calls_during_transition():
     assert audit_mock.await_count >= 1
     assert timeline_mock.await_count >= 1
     assert notify_mock.await_count >= 1
+
+
+def test_pickup_end_to_end_parent_teacher_leadership_workflow_and_enforcement_contracts():
+    db = PickupDbStub()
+    tenant, parent, teacher_user, leadership, teacher_profile, student, klass = _seed_parent_context(db)
+
+    teacher_client = _app_with_overrides(db, tenant, teacher=teacher_user)
+    parent_client = _app_with_overrides(db, tenant, parent=parent)
+    leadership_client = _app_with_overrides(db, tenant, leadership=leadership)
+
+    with (
+        patch("services.gateway.routers.pickup.log_action", new=AsyncMock()) as audit_mock,
+        patch("services.gateway.routers.pickup.send_to_user", new=AsyncMock()) as notify_mock,
+        patch("services.gateway.routers.pickup.write_timeline_event", new=AsyncMock()) as timeline_mock,
+    ):
+        db.student_parents[0].can_pickup = False
+        denied_create = parent_client.post(
+            "/parent/pickup-requests",
+            json={"student_id": str(student.id), "command_text": "pickup now"},
+        )
+        assert denied_create.status_code == 403
+
+        db.student_parents[0].can_pickup = True
+        created = parent_client.post(
+            "/parent/pickup-requests",
+            json={"student_id": str(student.id), "command_text": "pickup now"},
+        )
+        assert created.status_code == 200
+        created_body = created.json()
+        pickup_id = created_body["pickup_id"]
+        assert created_body["status"] == "requested"
+        assert created_body["within_geofence"] is False
+        assert created_body["status"] != "released"
+
+        skipped = leadership_client.post(f"/leadership/pickup-requests/{pickup_id}/call", json={"note": "skip"})
+        assert skipped.status_code == 409
+
+        acknowledged = teacher_client.post(f"/teacher/pickup-requests/{pickup_id}/acknowledge", json={"note": "ack"})
+        called = teacher_client.post(f"/teacher/pickup-requests/{pickup_id}/call", json={"note": "called"})
+        prepared = teacher_client.post(f"/teacher/pickup-requests/{pickup_id}/prepare", json={"note": "prepared"})
+        assert acknowledged.status_code == 200
+        assert called.status_code == 200
+        assert prepared.status_code == 200
+
+        unauthorized_teacher_user = SimpleNamespace(id=uuid.uuid4(), tenant_id=tenant.id, role="teacher")
+        unauthorized_teacher_profile = SimpleNamespace(id=uuid.uuid4(), tenant_id=tenant.id, user_id=unauthorized_teacher_user.id)
+        db.teachers.append(unauthorized_teacher_profile)
+        unauthorized_teacher_client = _app_with_overrides(db, tenant, teacher=unauthorized_teacher_user)
+        unauthorized_attempt = unauthorized_teacher_client.post(
+            f"/teacher/pickup-requests/{pickup_id}/acknowledge",
+            json={"note": "not allowed"},
+        )
+        assert unauthorized_attempt.status_code == 403
+
+        completed = leadership_client.post(
+            f"/leadership/pickup-requests/{pickup_id}/complete",
+            json={"note": "handover", "verification_method": "id_card", "verification_note": "guardian verified"},
+        )
+        assert completed.status_code == 200
+        completed_body = completed.json()
+        assert completed_body["status"] == "completed"
+        assert completed_body["verified_by"] == str(leadership.id)
+        assert completed_body["verified_at"] is not None
+        assert completed_body["acknowledged_at"] is not None
+        assert completed_body["called_at"] is not None
+        assert completed_body["prepared_at"] is not None
+        assert completed_body["completed_at"] is not None
+        assert completed_body["status"] != "released"
+
+        repeated_complete = leadership_client.post(
+            f"/leadership/pickup-requests/{pickup_id}/complete",
+            json={"note": "handover", "verification_method": "id_card", "verification_note": "guardian verified"},
+        )
+        assert repeated_complete.status_code == 200
+
+        terminal_cancel = leadership_client.post(f"/leadership/pickup-requests/{pickup_id}/cancel", json={"note": "late"})
+        assert terminal_cancel.status_code == 409
+
+        terminal_teacher_change = teacher_client.post(f"/teacher/pickup-requests/{pickup_id}/prepare", json={"note": "again"})
+        assert terminal_teacher_change.status_code == 409
+
+        details_after_complete = parent_client.get(f"/parent/pickup-requests/{pickup_id}")
+        assert details_after_complete.status_code == 200
+        assert details_after_complete.json()["status"] == "completed"
+
+        history = parent_client.get("/parent/pickup-requests", params={"status": "completed", "page": 1, "page_size": 50})
+        assert history.status_code == 200
+        assert any(item["pickup_id"] == pickup_id for item in history.json()["items"])
+
+        db.pickups[uuid.uuid4()] = PickupRequest(
+            id=uuid.uuid4(),
+            tenant_id=tenant.id,
+            parent_id=parent.id,
+            student_id=student.id,
+            class_id=klass.id,
+            teacher_id=teacher_profile.id,
+            channel="app",
+            command_text="legacy released",
+            parent_latitude=0.0,
+            parent_longitude=0.0,
+            distance_meters=0.0,
+            geofence_radius_m=150,
+            within_geofence=False,
+            early_pickup=False,
+            status="released",
+            requested_at=datetime.now(timezone.utc),
+        )
+        db.pickups[uuid.uuid4()] = PickupRequest(
+            id=uuid.uuid4(),
+            tenant_id=tenant.id,
+            parent_id=parent.id,
+            student_id=student.id,
+            class_id=klass.id,
+            teacher_id=teacher_profile.id,
+            channel="app",
+            command_text="legacy rejected",
+            parent_latitude=0.0,
+            parent_longitude=0.0,
+            distance_meters=1000.0,
+            geofence_radius_m=150,
+            within_geofence=False,
+            early_pickup=False,
+            status="rejected_outside_geofence",
+            requested_at=datetime.now(timezone.utc),
+        )
+        all_history = parent_client.get("/parent/pickup-requests", params={"page": 1, "page_size": 50})
+        assert all_history.status_code == 200
+        all_statuses = {item["status"] for item in all_history.json()["items"]}
+        assert "released" in all_statuses
+        assert "rejected_outside_geofence" in all_statuses
+
+        wrong_tenant_parent = SimpleNamespace(id=parent.id, tenant_id=uuid.uuid4(), role="parent")
+        wrong_tenant_parent_client = _app_with_overrides(db, tenant, parent=wrong_tenant_parent)
+        cross_tenant = wrong_tenant_parent_client.get(f"/parent/pickup-requests/{pickup_id}")
+        assert cross_tenant.status_code == 401
+
+        assert audit_mock.await_count >= 5
+        assert timeline_mock.await_count >= 5
+        assert notify_mock.await_count >= 4
 
 
 def test_pickup_migration_and_orm_parity_for_phase_86a_fields():

@@ -4,10 +4,12 @@ import uuid
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, MagicMock, patch
 
+import pytest
 from fastapi import HTTPException, status
 from fastapi.testclient import TestClient
 
 from services.gateway.main import app
+from services.gateway.weekly_reports.authorization import authorize_staff_for_student_action
 from shared.auth.jwt import create_access_token
 from shared.auth.tenant import resolve_tenant
 from shared.db.connection import get_db
@@ -486,3 +488,35 @@ def test_initialization_is_idempotent_and_archived_report_blocks_duplicate_logic
             assert first_response.json()["report_id"] == second_response.json()["report_id"]
         finally:
             app.dependency_overrides.clear()
+
+
+@pytest.mark.asyncio
+async def test_weekly_reports_teacher_scope_prefers_canonical_assignments() -> None:
+    tenant = _tenant()
+    teacher = _user(tenant_id=tenant.id, role="teacher")
+    student = SimpleNamespace(id=uuid.uuid4(), tenant_id=tenant.id, class_id=uuid.uuid4())
+    klass = SimpleNamespace(id=student.class_id, tenant_id=tenant.id, class_teacher_id=uuid.uuid4(), academic_year="2026")
+    teacher_profile = SimpleNamespace(id=uuid.uuid4(), tenant_id=tenant.id, user_id=teacher.id)
+
+    student_result = MagicMock()
+    student_result.first.return_value = (student, klass)
+    teacher_result = MagicMock()
+    teacher_result.scalar_one_or_none.return_value = teacher_profile
+
+    db = AsyncMock()
+    db.execute.side_effect = [student_result, teacher_result]
+
+    with patch(
+        "services.gateway.weekly_reports.authorization.teacher_has_weekly_report_class_scope",
+        new=AsyncMock(return_value=SimpleNamespace(authorized=False, source="canonical")),
+    ):
+        with pytest.raises(HTTPException) as exc_info:
+            await authorize_staff_for_student_action(
+                db=db,
+                tenant_id=tenant.id,
+                actor=teacher,
+                student_id=student.id,
+                action="init",
+            )
+
+    assert exc_info.value.status_code == 404

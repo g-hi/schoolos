@@ -14,6 +14,7 @@ from sqlalchemy.exc import MultipleResultsFound
 from services.gateway.ai.audit import log_action
 from services.gateway.ai.family_timeline import write_timeline_event
 from services.gateway.ai.messenger import send_to_user
+from services.gateway.authorization.teacher_scope import teacher_has_homeroom_scope, teacher_has_subject_scope
 from shared.auth.dependencies import (
     resolve_authenticated_leadership,
     resolve_authenticated_parent,
@@ -331,6 +332,7 @@ async def _validate_teacher_subject_option(
     teacher_id: uuid.UUID,
     subject_id: uuid.UUID | None,
     timetable_entry_id: uuid.UUID | None,
+    effective_date,
 ) -> tuple[Student, Class, Teacher, TimetableEntry | None]:
     student_result = await db.execute(
         select(Student, Class)
@@ -351,7 +353,15 @@ async def _validate_teacher_subject_option(
     if not teacher:
         raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Teacher not found.")
 
-    if klass.class_teacher_id == teacher.id:
+    homeroom_scope = await teacher_has_homeroom_scope(
+        db=db,
+        tenant_id=tenant.id,
+        teacher_id=teacher.id,
+        klass=klass,
+        effective_date=effective_date,
+    )
+
+    if homeroom_scope.authorized:
         if subject_id is not None:
             raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail="Homeroom appointments must have subject_id null.")
         if timetable_entry_id is not None:
@@ -361,6 +371,21 @@ async def _validate_teacher_subject_option(
     if timetable_entry_id is None:
         raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail="timetable_entry_id is required for timetable-based appointments.")
 
+    if subject_id is None:
+        raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail="Unauthorized teacher-subject combination.")
+
+    subject_scope = await teacher_has_subject_scope(
+        db=db,
+        tenant_id=tenant.id,
+        teacher_id=teacher.id,
+        klass=klass,
+        subject_id=subject_id,
+        timetable_entry_id=timetable_entry_id,
+        effective_date=effective_date,
+    )
+    if not subject_scope.authorized:
+        raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail="Unauthorized teacher-subject combination.")
+
     entry_result = await db.execute(
         select(TimetableEntry).where(
             TimetableEntry.id == timetable_entry_id,
@@ -368,14 +393,14 @@ async def _validate_teacher_subject_option(
             TimetableEntry.class_id == klass.id,
             TimetableEntry.academic_year == klass.academic_year,
             TimetableEntry.teacher_id == teacher.id,
+            TimetableEntry.subject_id == subject_id,
             TimetableEntry.is_active.is_(True),
         )
     )
     entry = entry_result.scalar_one_or_none()
     if not entry:
         raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail="Unauthorized teacher-subject combination.")
-    if subject_id is None or entry.subject_id != subject_id:
-        raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail="Unauthorized teacher-subject combination.")
+
     return student, klass, teacher, entry
 
 
@@ -480,6 +505,7 @@ async def create_parent_appointment(
         teacher_id=body.teacher_id,
         subject_id=body.subject_id,
         timetable_entry_id=body.timetable_entry_id,
+        effective_date=body.requested_start_at.date(),
     )
 
     appt = Appointment(

@@ -11,6 +11,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from services.gateway.ai.audit import log_action
 from services.gateway.ai.family_timeline import write_timeline_event
 from services.gateway.ai.messenger import send_to_user
+from services.gateway.authorization.teacher_scope import teacher_has_homeroom_scope
 from shared.auth.dependencies import (
     resolve_authenticated_leadership,
     resolve_authenticated_parent,
@@ -267,16 +268,25 @@ async def _teacher_can_access_pickup(
     teacher_profile: Teacher,
     pickup: PickupRequest,
 ) -> bool:
-    if pickup.teacher_id is not None and pickup.teacher_id == teacher_profile.id:
-        return True
     result = await db.execute(
         select(Class).where(
             Class.tenant_id == tenant_id,
             Class.id == pickup.class_id,
-            Class.class_teacher_id == teacher_profile.id,
         )
     )
-    return result.scalar_one_or_none() is not None
+    klass = result.scalar_one_or_none()
+    if klass is None:
+        return False
+
+    effective_date = (pickup.requested_at or datetime.now(timezone.utc)).date()
+    decision = await teacher_has_homeroom_scope(
+        db=db,
+        tenant_id=tenant_id,
+        teacher_id=teacher_profile.id,
+        klass=klass,
+        effective_date=effective_date,
+    )
+    return decision.authorized
 
 
 async def _parent_create_pickup(

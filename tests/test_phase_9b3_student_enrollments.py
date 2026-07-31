@@ -275,9 +275,13 @@ async def test_summary_returns_expected_shape(monkeypatch) -> None:
     class_id = uuid.uuid4()
     grade_level_id = uuid.uuid4()
 
-    db.scalar.side_effect = [7, 3, 2, 1, 1, 4]
+    db.scalar.side_effect = [7, 3, 2, 1, 1, 4, 0]
     db.execute.side_effect = [
         _Result(rows=[(active_student_id,)]),
+        _Result(rows=[]),
+        _Result(rows=[(active_student_id, class_id)]),
+        _Result(rows=[]),
+        _Result(rows=[]),
         _Result(rows=[(class_id, "5A", "A", 3)]),
         _Result(rows=[(grade_level_id, "Grade 5", 3)]),
     ]

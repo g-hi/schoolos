@@ -502,7 +502,12 @@ async def test_arbitrary_teacher_subject_combination_is_rejected() -> None:
         klass = SimpleNamespace(id=uuid.uuid4(), academic_year="2026", class_teacher_id=uuid.uuid4())
         teacher = SimpleNamespace(id=uuid.uuid4())
         db = AsyncMock()
-        db.execute.side_effect = [_result(first=(student, klass)), _result(scalar=None), _result(scalar=None)]
+        db.execute.side_effect = [
+            _result(scalar=student),   # load student by id
+            _result(rows=[]),          # resolve_student_class enrollment query
+            _result(scalar=klass),     # load class after resolve
+            _result(scalar=None),      # teacher not found -> 403
+        ]
         with pytest.raises(HTTPException) as exc_info:
             await _validate_teacher_subject_option(
                 db=db,
@@ -525,7 +530,12 @@ async def test_canonical_subject_scope_blocks_legacy_timetable_authorization() -
         subject_id = uuid.uuid4()
         timetable_entry_id = uuid.uuid4()
         db = AsyncMock()
-        db.execute.side_effect = [_result(first=(student, klass)), _result(scalar=teacher)]
+        db.execute.side_effect = [
+            _result(scalar=student),   # load student by id
+            _result(rows=[]),          # resolve_student_class enrollment query
+            _result(scalar=klass),     # load class after resolve
+            _result(scalar=teacher),   # load teacher
+        ]
 
         with (
             patch("services.gateway.routers.appointments.teacher_has_homeroom_scope", new=AsyncMock(return_value=SimpleNamespace(authorized=False, source="canonical"))),

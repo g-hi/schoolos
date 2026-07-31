@@ -15,6 +15,7 @@ from services.gateway.ai.audit import log_action
 from services.gateway.ai.family_timeline import write_timeline_event
 from services.gateway.ai.messenger import send_to_user
 from services.gateway.authorization.teacher_scope import teacher_has_homeroom_scope, teacher_has_subject_scope
+from services.gateway.authorization.student_enrollment_scope import resolve_student_class
 from shared.auth.dependencies import (
     resolve_authenticated_leadership,
     resolve_authenticated_parent,
@@ -334,15 +335,33 @@ async def _validate_teacher_subject_option(
     timetable_entry_id: uuid.UUID | None,
     effective_date,
 ) -> tuple[Student, Class, Teacher, TimetableEntry | None]:
+    # Load student first
     student_result = await db.execute(
-        select(Student, Class)
-        .join(Class, Class.id == Student.class_id)
-        .where(Student.id == student_id, Student.tenant_id == tenant.id, Class.tenant_id == tenant.id)
+        select(Student).where(Student.id == student_id, Student.tenant_id == tenant.id)
     )
-    row = student_result.first()
-    if not row:
+    student = student_result.scalar_one_or_none()
+    if not student:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Student not found.")
-    student, klass = row
+
+    # Resolve class via canonical-first enrollment scope
+    resolution = await resolve_student_class(
+        db=db,
+        tenant_id=tenant.id,
+        student_id=student_id,
+        effective_date=effective_date,
+    )
+
+    if resolution.class_id is None:
+        if resolution.denied_due_to_canonical_history:
+            raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Student has no active canonical enrollment for this date.")
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Student not found.")
+
+    klass_result = await db.execute(
+        select(Class).where(Class.id == resolution.class_id, Class.tenant_id == tenant.id)
+    )
+    klass = klass_result.scalar_one_or_none()
+    if not klass:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Student not found.")
 
     teacher_result = await db.execute(
         select(Teacher)

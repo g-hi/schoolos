@@ -11,6 +11,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from shared.auth.dependencies import resolve_authenticated_teacher
 from shared.auth.tenant import resolve_tenant
 from shared.db.connection import get_db, set_tenant_context
+from services.gateway.authorization.student_enrollment_scope import list_class_student_ids
 from shared.db.models import (
     AcademicYear,
     Campus,
@@ -210,18 +211,16 @@ async def get_teacher_my_classes(
 
     class_ids = list(classes_map.keys())
     if class_ids:
-        student_counts = (
-            await db.execute(
-                select(Student.class_id, func.count(Student.id))
-                .where(
-                    Student.tenant_id == tenant.id,
-                    Student.class_id.in_(class_ids),
-                )
-                .group_by(Student.class_id)
+        # Canonical-first student counts: active canonical enrollments preferred;
+        # legacy Student.class_id only for students with no canonical history.
+        for class_id in class_ids:
+            counts = await list_class_student_ids(
+                db=db,
+                tenant_id=tenant.id,
+                class_id=class_id,
+                effective_date=ref_date,
             )
-        ).all()
-        for class_id, count in student_counts:
-            classes_map[class_id]["student_count"] = int(count)
+            classes_map[class_id]["student_count"] = len(counts["all_student_ids"])
 
         weekly_period_counts = (
             await db.execute(

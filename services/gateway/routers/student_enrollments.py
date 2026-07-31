@@ -564,6 +564,69 @@ async def student_enrollment_summary(
         legacy_only_stmt = legacy_only_stmt.where(Student.id.not_in(active_student_ids))
     legacy_only_count = int(await db.scalar(legacy_only_stmt) or 0)
 
+    # Diagnostic: students with terminal canonical history and stale class_id
+    terminal_history_student_ids_rows = (
+        await db.execute(
+            select(StudentEnrollment.student_id)
+            .where(
+                StudentEnrollment.tenant_id == tenant.id,
+                StudentEnrollment.status.in_(list(_TERMINAL_STATUSES)),
+            )
+            .distinct()
+        )
+    ).all()
+    terminal_history_student_ids = {r[0] for r in terminal_history_student_ids_rows}
+    terminal_stale_stmt = select(func.count(Student.id)).where(
+        Student.tenant_id == tenant.id,
+        Student.class_id.is_not(None),
+        Student.id.in_(terminal_history_student_ids) if terminal_history_student_ids else Student.id.is_(None),
+    )
+    if active_student_ids:
+        terminal_stale_stmt = terminal_stale_stmt.where(Student.id.not_in(active_student_ids))
+    students_with_terminal_history_stale_class_id = int(await db.scalar(terminal_stale_stmt) or 0)
+
+    # Diagnostic: students with class_id conflicting with active canonical enrollment
+    conflict_count = 0
+    if active_student_ids:
+        active_enrollment_class_rows = (
+            await db.execute(
+                select(StudentEnrollment.student_id, StudentEnrollment.class_id)
+                .where(
+                    StudentEnrollment.tenant_id == tenant.id,
+                    StudentEnrollment.status == "active",
+                )
+            )
+        ).all()
+        active_class_by_student = {r[0]: r[1] for r in active_enrollment_class_rows}
+
+        conflicting_students_rows = (
+            await db.execute(
+                select(Student.id, Student.class_id).where(
+                    Student.tenant_id == tenant.id,
+                    Student.id.in_(active_student_ids),
+                    Student.class_id.is_not(None),
+                )
+            )
+        ).all()
+        conflict_count = sum(
+            1 for sid, legacy_cid in conflicting_students_rows
+            if legacy_cid is not None and active_class_by_student.get(sid) != legacy_cid
+        )
+
+    # Diagnostic: multiple active enrollments (should not exist given DB constraint)
+    multi_active_rows = (
+        await db.execute(
+            select(StudentEnrollment.student_id, func.count(StudentEnrollment.id))
+            .where(
+                StudentEnrollment.tenant_id == tenant.id,
+                StudentEnrollment.status == "active",
+            )
+            .group_by(StudentEnrollment.student_id)
+            .having(func.count(StudentEnrollment.id) > 1)
+        )
+    ).all()
+    students_with_multiple_active_enrollments = len(multi_active_rows)
+
     active_by_class_rows = (
         await db.execute(
             select(Class.id, Class.code, Class.section, func.count(StudentEnrollment.id))
@@ -600,6 +663,9 @@ async def student_enrollment_summary(
         "completed_enrollments": completed_enrollments,
         "students_with_active_canonical_enrollment": len(active_student_ids),
         "students_with_legacy_class_id_but_no_canonical_enrollment": legacy_only_count,
+        "students_with_terminal_canonical_history_and_stale_class_id": students_with_terminal_history_stale_class_id,
+        "students_with_class_id_conflicting_active_enrollment": conflict_count,
+        "students_with_multiple_active_enrollments": students_with_multiple_active_enrollments,
         "active_enrollments_by_class": [
             {
                 "class_id": str(class_id),
@@ -617,4 +683,109 @@ async def student_enrollment_summary(
             }
             for grade_level_id, grade_level_name, count in active_by_grade_rows
         ],
+    }
+
+
+@router.get("/reconciliation", summary="Enrollment reconciliation diagnostics")
+async def student_enrollment_reconciliation(
+    tenant: Tenant = Depends(resolve_tenant),
+    actor: User = Depends(resolve_authenticated_leadership),
+    db: AsyncSession = Depends(get_db),
+):
+    """
+    Return safe diagnostic rows for students with enrollment inconsistencies.
+    No records are modified.
+    Response includes:
+    - students with terminal canonical history and stale Student.class_id
+    - students with class_id conflicting with their active canonical enrollment
+    - students with multiple active enrollments (data anomaly diagnostics)
+    Does NOT expose contacts, credentials, or family information.
+    """
+    await set_tenant_context(db, tenant.id)
+
+    # All students with class_id set
+    all_students_rows = (
+        await db.execute(
+            select(Student.id, Student.name, Student.class_id)
+            .where(
+                Student.tenant_id == tenant.id,
+                Student.class_id.is_not(None),
+            )
+        )
+    ).all()
+
+    # Active canonical enrollments per student
+    active_enrollment_rows = (
+        await db.execute(
+            select(StudentEnrollment.student_id, StudentEnrollment.class_id, StudentEnrollment.id)
+            .where(
+                StudentEnrollment.tenant_id == tenant.id,
+                StudentEnrollment.status == "active",
+            )
+        )
+    ).all()
+    active_by_student: dict[uuid.UUID, tuple[uuid.UUID, uuid.UUID]] = {
+        row[0]: (row[1], row[2]) for row in active_enrollment_rows
+    }
+
+    # Students with any canonical enrollment history (incl terminal)
+    any_history_rows = (
+        await db.execute(
+            select(StudentEnrollment.student_id).where(
+                StudentEnrollment.tenant_id == tenant.id,
+            ).distinct()
+        )
+    ).all()
+    students_with_canonical_history = {row[0] for row in any_history_rows}
+
+    # Multiple active enrollments check (should not occur with DB constraint)
+    from sqlalchemy import func as sa_func
+    multi_active_rows = (
+        await db.execute(
+            select(StudentEnrollment.student_id, sa_func.count(StudentEnrollment.id))
+            .where(
+                StudentEnrollment.tenant_id == tenant.id,
+                StudentEnrollment.status == "active",
+            )
+            .group_by(StudentEnrollment.student_id)
+            .having(sa_func.count(StudentEnrollment.id) > 1)
+        )
+    ).all()
+    multi_active_student_ids = {row[0] for row in multi_active_rows}
+
+    diagnostics = []
+    for student_id, display_name, legacy_class_id in all_students_rows:
+        issue_code = None
+        canonical_active_class_id = None
+        action = None
+
+        active_enrollment = active_by_student.get(student_id)
+        if active_enrollment:
+            canonical_active_class_id = active_enrollment[0]
+
+        if student_id in multi_active_student_ids:
+            issue_code = "multiple_active_enrollments"
+            action = "Contact system administrator; database constraint violation suspected."
+        elif student_id in students_with_canonical_history and not active_enrollment:
+            # Has canonical history, no active enrollment — stale class_id
+            issue_code = "terminal_canonical_history_stale_class_id"
+            action = "Withdraw, complete, or create a new enrollment to reflect current status."
+        elif active_enrollment and canonical_active_class_id != legacy_class_id:
+            # Active enrollment points to different class than Student.class_id
+            issue_code = "class_id_conflicts_with_active_enrollment"
+            action = "Update Student.class_id or review enrollment to resolve mismatch."
+
+        if issue_code:
+            diagnostics.append({
+                "student_id": str(student_id),
+                "display_name": display_name,
+                "legacy_class_id": str(legacy_class_id) if legacy_class_id else None,
+                "canonical_active_class_id": str(canonical_active_class_id) if canonical_active_class_id else None,
+                "issue_code": issue_code,
+                "recommended_action": action,
+            })
+
+    return {
+        "total_issues": len(diagnostics),
+        "issues": diagnostics,
     }

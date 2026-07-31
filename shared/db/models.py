@@ -66,6 +66,96 @@ class Tenant(Base):
 
 
 # ─────────────────────────────────────────────────────────────────────────────
+# Campus  (tenant-scoped campus catalogue)
+# ─────────────────────────────────────────────────────────────────────────────
+
+class Campus(Base):
+    __tablename__ = "campuses"
+
+    id:          Mapped[uuid.UUID]      = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    tenant_id:   Mapped[uuid.UUID]      = mapped_column(UUID(as_uuid=True), ForeignKey("tenants.id", ondelete="CASCADE"), nullable=False, index=True)
+    name:        Mapped[str]            = mapped_column(String(255), nullable=False)
+    code:        Mapped[str]            = mapped_column(String(50), nullable=False)
+    description: Mapped[str | None]     = mapped_column(Text, nullable=True)
+    is_active:   Mapped[bool]           = mapped_column(Boolean, default=True, nullable=False)
+    created_at:  Mapped[datetime]       = mapped_column(DateTime(timezone=True), server_default=func.now(), nullable=False)
+    updated_at:  Mapped[datetime]       = mapped_column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now(), nullable=False)
+
+    __table_args__ = (
+        UniqueConstraint("tenant_id", "code", name="uq_campus_code_per_tenant"),
+    )
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# AcademicYear  (tenant-scoped year boundaries)
+# ─────────────────────────────────────────────────────────────────────────────
+
+class AcademicYear(Base):
+    __tablename__ = "academic_years"
+
+    id:         Mapped[uuid.UUID]      = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    tenant_id:  Mapped[uuid.UUID]      = mapped_column(UUID(as_uuid=True), ForeignKey("tenants.id", ondelete="CASCADE"), nullable=False, index=True)
+    name:       Mapped[str]            = mapped_column(String(50), nullable=False)
+    start_date: Mapped[date_type]      = mapped_column(Date, nullable=False)
+    end_date:   Mapped[date_type]      = mapped_column(Date, nullable=False)
+    is_current: Mapped[bool]           = mapped_column(Boolean, default=False, nullable=False)
+    is_active:  Mapped[bool]           = mapped_column(Boolean, default=True, nullable=False)
+    created_at: Mapped[datetime]       = mapped_column(DateTime(timezone=True), server_default=func.now(), nullable=False)
+    updated_at: Mapped[datetime]       = mapped_column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now(), nullable=False)
+
+    __table_args__ = (
+        UniqueConstraint("tenant_id", "name", name="uq_academic_year_name_per_tenant"),
+    )
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Term  (subdivision of an academic year)
+# ─────────────────────────────────────────────────────────────────────────────
+
+class Term(Base):
+    __tablename__ = "terms"
+
+    id:               Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    tenant_id:        Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), ForeignKey("tenants.id", ondelete="CASCADE"), nullable=False, index=True)
+    academic_year_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), ForeignKey("academic_years.id", ondelete="CASCADE"), nullable=False, index=True)
+    name:             Mapped[str]       = mapped_column(String(100), nullable=False)
+    code:             Mapped[str]       = mapped_column(String(50), nullable=False)
+    start_date:       Mapped[date_type] = mapped_column(Date, nullable=False)
+    end_date:         Mapped[date_type] = mapped_column(Date, nullable=False)
+    sequence:         Mapped[int]       = mapped_column(Integer, nullable=False)
+    is_active:        Mapped[bool]      = mapped_column(Boolean, default=True, nullable=False)
+    created_at:       Mapped[datetime]  = mapped_column(DateTime(timezone=True), server_default=func.now(), nullable=False)
+    updated_at:       Mapped[datetime]  = mapped_column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now(), nullable=False)
+
+    __table_args__ = (
+        CheckConstraint("sequence > 0", name="ck_terms_sequence_positive"),
+        UniqueConstraint("tenant_id", "academic_year_id", "code", name="uq_term_code_per_year_per_tenant"),
+    )
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# GradeLevel  (tenant-scoped grade taxonomy)
+# ─────────────────────────────────────────────────────────────────────────────
+
+class GradeLevel(Base):
+    __tablename__ = "grade_levels"
+
+    id:         Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    tenant_id:  Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), ForeignKey("tenants.id", ondelete="CASCADE"), nullable=False, index=True)
+    name:       Mapped[str]       = mapped_column(String(100), nullable=False)
+    code:       Mapped[str]       = mapped_column(String(50), nullable=False)
+    sequence:   Mapped[int]       = mapped_column(Integer, nullable=False)
+    is_active:  Mapped[bool]      = mapped_column(Boolean, default=True, nullable=False)
+    created_at: Mapped[datetime]  = mapped_column(DateTime(timezone=True), server_default=func.now(), nullable=False)
+    updated_at: Mapped[datetime]  = mapped_column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now(), nullable=False)
+
+    __table_args__ = (
+        CheckConstraint("sequence > 0", name="ck_grade_levels_sequence_positive"),
+        UniqueConstraint("tenant_id", "code", name="uq_grade_level_code_per_tenant"),
+    )
+
+
+# ─────────────────────────────────────────────────────────────────────────────
 # User  (all humans in the system)
 # ─────────────────────────────────────────────────────────────────────────────
 

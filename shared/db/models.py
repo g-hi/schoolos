@@ -20,6 +20,7 @@ import uuid
 from datetime import datetime, date as date_type
 
 from sqlalchemy import (
+    and_,
     UUID,
     Boolean,
     CheckConstraint,
@@ -302,6 +303,62 @@ class TeacherSubject(Base):
 
     teacher: Mapped["Teacher"] = relationship("Teacher", back_populates="subjects")
     subject: Mapped["Subject"] = relationship("Subject")
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# TeacherAssignment  (canonical teacher assignment history)
+# ─────────────────────────────────────────────────────────────────────────────
+
+class TeacherAssignment(Base):
+    __tablename__ = "teacher_assignments"
+
+    id:               Mapped[uuid.UUID]      = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    tenant_id:        Mapped[uuid.UUID]      = mapped_column(UUID(as_uuid=True), ForeignKey("tenants.id", ondelete="CASCADE"), nullable=False, index=True)
+    academic_year_id: Mapped[uuid.UUID]      = mapped_column(UUID(as_uuid=True), ForeignKey("academic_years.id", ondelete="RESTRICT"), nullable=False, index=True)
+    teacher_id:       Mapped[uuid.UUID]      = mapped_column(UUID(as_uuid=True), ForeignKey("teachers.id", ondelete="RESTRICT"), nullable=False, index=True)
+    class_id:         Mapped[uuid.UUID]      = mapped_column(UUID(as_uuid=True), ForeignKey("classes.id", ondelete="RESTRICT"), nullable=False, index=True)
+    subject_offering_id: Mapped[uuid.UUID | None] = mapped_column(UUID(as_uuid=True), ForeignKey("subject_offerings.id", ondelete="RESTRICT"), nullable=True, index=True)
+    assignment_type:  Mapped[str]            = mapped_column(String(50), nullable=False, index=True)
+    start_date:       Mapped[date_type]      = mapped_column(Date, nullable=False)
+    end_date:         Mapped[date_type | None] = mapped_column(Date, nullable=True)
+    is_active:        Mapped[bool]           = mapped_column(Boolean, nullable=False, server_default="true")
+    created_at:       Mapped[datetime]       = mapped_column(DateTime(timezone=True), server_default=func.now(), nullable=False)
+    updated_at:       Mapped[datetime]       = mapped_column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now(), nullable=False)
+
+    __table_args__ = (
+        CheckConstraint("assignment_type IN ('homeroom', 'subject_teacher')", name="ck_teacher_assignments_type"),
+        CheckConstraint(
+            "(assignment_type = 'homeroom' AND subject_offering_id IS NULL) OR "
+            "(assignment_type = 'subject_teacher' AND subject_offering_id IS NOT NULL)",
+            name="ck_teacher_assignments_subject_scope",
+        ),
+        CheckConstraint("end_date IS NULL OR end_date >= start_date", name="ck_teacher_assignments_date_range"),
+        Index(
+            "uq_teacher_assignments_active_homeroom_class",
+            "tenant_id",
+            "academic_year_id",
+            "class_id",
+            unique=True,
+            postgresql_where=and_(is_active.is_(True), assignment_type == "homeroom"),
+        ),
+        Index(
+            "uq_teacher_assignments_active_subject_teacher",
+            "tenant_id",
+            "academic_year_id",
+            "teacher_id",
+            "class_id",
+            "subject_offering_id",
+            unique=True,
+            postgresql_where=and_(is_active.is_(True), assignment_type == "subject_teacher"),
+        ),
+        Index("ix_teacher_assignments_tenant_id", "tenant_id"),
+        Index("ix_teacher_assignments_academic_year_id", "academic_year_id"),
+        Index("ix_teacher_assignments_teacher_id", "teacher_id"),
+        Index("ix_teacher_assignments_class_id", "class_id"),
+        Index("ix_teacher_assignments_subject_offering_id", "subject_offering_id"),
+        Index("ix_teacher_assignments_assignment_type", "assignment_type"),
+        Index("ix_teacher_assignments_is_active", "is_active"),
+    )
 
 
 # ─────────────────────────────────────────────────────────────────────────────

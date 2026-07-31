@@ -20,20 +20,223 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
 from services.gateway.ai.audit import log_action
+from shared.auth.dependencies import resolve_authenticated_leadership
 from shared.auth.tenant import resolve_tenant
 from shared.db.connection import get_db, set_tenant_context
 from shared.db.models import (
+    AcademicYear,
     Class,
     PickupRequest,
     Student,
     Substitution,
     Teacher,
+    TeacherAssignment,
     TimetableEntry,
     Tenant,
     User,
 )
 
 router = APIRouter(prefix="/dashboard", tags=["Dashboard"])
+
+
+@router.get("/teacher-assignment-coverage", summary="Teacher assignment coverage metrics")
+async def teacher_assignment_coverage(
+    tenant: Tenant = Depends(resolve_tenant),
+    actor: User = Depends(resolve_authenticated_leadership),
+    db: AsyncSession = Depends(get_db),
+):
+    await set_tenant_context(db, tenant.id)
+    today = date_type.today()
+
+    teacher_rows = (
+        await db.execute(
+            select(Teacher, User)
+            .join(User, User.id == Teacher.user_id)
+            .where(
+                Teacher.tenant_id == tenant.id,
+                User.tenant_id == tenant.id,
+                User.is_active.is_(True),
+            )
+        )
+    ).all()
+
+    teacher_profiles = [row[0] for row in teacher_rows]
+    teacher_users = {row[0].id: row[1] for row in teacher_rows}
+    teacher_ids = [teacher.id for teacher in teacher_profiles]
+
+    canonical_history_pairs = set()
+    canonical_history_rows = (
+        await db.execute(
+            select(TeacherAssignment.teacher_id, TeacherAssignment.class_id)
+            .where(
+                TeacherAssignment.tenant_id == tenant.id,
+                TeacherAssignment.teacher_id.in_(teacher_ids if teacher_ids else [None]),
+            )
+            .distinct()
+        )
+    ).all()
+    canonical_history_pairs.update((row[0], row[1]) for row in canonical_history_rows if row[0] and row[1])
+
+    active_canonical_rows = (
+        await db.execute(
+            select(TeacherAssignment)
+            .join(Class, Class.id == TeacherAssignment.class_id)
+            .join(AcademicYear, AcademicYear.id == TeacherAssignment.academic_year_id)
+            .where(
+                TeacherAssignment.tenant_id == tenant.id,
+                TeacherAssignment.is_active.is_(True),
+                TeacherAssignment.start_date <= today,
+                (TeacherAssignment.end_date.is_(None) | (TeacherAssignment.end_date >= today)),
+                Class.tenant_id == tenant.id,
+                Class.is_active.is_(True),
+                TeacherAssignment.academic_year_id == Class.academic_year_id,
+                AcademicYear.tenant_id == tenant.id,
+                AcademicYear.is_active.is_(True),
+            )
+        )
+    ).scalars().all()
+
+    canonical_counts = {teacher_id: 0 for teacher_id in teacher_ids}
+    canonical_homeroom_counts = {teacher_id: 0 for teacher_id in teacher_ids}
+    canonical_subject_counts = {teacher_id: 0 for teacher_id in teacher_ids}
+    classes_with_active_homeroom: set[uuid.UUID] = set()
+
+    for assignment in active_canonical_rows:
+        if assignment.teacher_id not in canonical_counts:
+            continue
+        canonical_counts[assignment.teacher_id] += 1
+        if assignment.assignment_type == "homeroom":
+            canonical_homeroom_counts[assignment.teacher_id] += 1
+            classes_with_active_homeroom.add(assignment.class_id)
+        elif assignment.assignment_type == "subject_teacher":
+            canonical_subject_counts[assignment.teacher_id] += 1
+
+    legacy_pairs: set[tuple[uuid.UUID, uuid.UUID]] = set()
+
+    class_teacher_rows = (
+        await db.execute(
+            select(Class.class_teacher_id, Class.id)
+            .where(
+                Class.tenant_id == tenant.id,
+                Class.is_active.is_(True),
+                Class.class_teacher_id.is_not(None),
+                Class.class_teacher_id.in_(teacher_ids if teacher_ids else [None]),
+            )
+        )
+    ).all()
+    for teacher_id, class_id in class_teacher_rows:
+        if (teacher_id, class_id) not in canonical_history_pairs:
+            legacy_pairs.add((teacher_id, class_id))
+
+    timetable_rows = (
+        await db.execute(
+            select(TimetableEntry.teacher_id, TimetableEntry.class_id)
+            .join(Class, Class.id == TimetableEntry.class_id)
+            .where(
+                TimetableEntry.tenant_id == tenant.id,
+                TimetableEntry.teacher_id.in_(teacher_ids if teacher_ids else [None]),
+                TimetableEntry.is_active.is_(True),
+                Class.tenant_id == tenant.id,
+                Class.is_active.is_(True),
+                TimetableEntry.academic_year == Class.academic_year,
+            )
+            .distinct()
+        )
+    ).all()
+    for teacher_id, class_id in timetable_rows:
+        if (teacher_id, class_id) not in canonical_history_pairs:
+            legacy_pairs.add((teacher_id, class_id))
+
+    teachers_with_canonical = {teacher_id for teacher_id, count in canonical_counts.items() if count > 0}
+    teachers_with_legacy_only = {
+        teacher_id
+        for teacher_id in teacher_ids
+        if teacher_id not in teachers_with_canonical and any(pair[0] == teacher_id for pair in legacy_pairs)
+    }
+
+    active_canonical_classes = (
+        await db.execute(
+            select(func.count(Class.id))
+            .join(AcademicYear, AcademicYear.id == Class.academic_year_id)
+            .where(
+                Class.tenant_id == tenant.id,
+                Class.is_active.is_(True),
+                Class.campus_id.is_not(None),
+                Class.academic_year_id.is_not(None),
+                Class.grade_level_id.is_not(None),
+                AcademicYear.tenant_id == tenant.id,
+                AcademicYear.is_active.is_(True),
+            )
+        )
+    ).scalar_one_or_none() or 0
+
+    active_subject_teacher_assignments = sum(
+        1 for assignment in active_canonical_rows if assignment.assignment_type == "subject_teacher"
+    )
+
+    classes_without_active_homeroom = max(int(active_canonical_classes) - len(classes_with_active_homeroom), 0)
+    coverage_percentage = (
+        round((len(classes_with_active_homeroom) / int(active_canonical_classes)) * 100, 1)
+        if int(active_canonical_classes) > 0
+        else 0.0
+    )
+
+    period_counts = {teacher_id: 0 for teacher_id in teacher_ids}
+    period_rows = (
+        await db.execute(
+            select(TimetableEntry.teacher_id, func.count(TimetableEntry.id))
+            .join(Class, Class.id == TimetableEntry.class_id)
+            .where(
+                TimetableEntry.tenant_id == tenant.id,
+                TimetableEntry.teacher_id.in_(teacher_ids if teacher_ids else [None]),
+                TimetableEntry.is_active.is_(True),
+                Class.tenant_id == tenant.id,
+                Class.is_active.is_(True),
+                TimetableEntry.academic_year == Class.academic_year,
+            )
+            .group_by(TimetableEntry.teacher_id)
+        )
+    ).all()
+    for teacher_id, count in period_rows:
+        period_counts[teacher_id] = int(count)
+
+    breakdown = []
+    for teacher in teacher_profiles:
+        if canonical_counts.get(teacher.id, 0) > 0:
+            status_label = "canonical"
+        elif teacher.id in teachers_with_legacy_only:
+            status_label = "legacy_only"
+        else:
+            status_label = "unassigned"
+
+        breakdown.append(
+            {
+                "teacher_id": str(teacher.id),
+                "display_name": teacher_users[teacher.id].name,
+                "canonical_assignment_count": canonical_counts.get(teacher.id, 0),
+                "homeroom_count": canonical_homeroom_counts.get(teacher.id, 0),
+                "subject_teacher_count": canonical_subject_counts.get(teacher.id, 0),
+                "scheduled_weekly_periods": period_counts.get(teacher.id, 0),
+                "assignment_status": status_label,
+            }
+        )
+
+    breakdown.sort(key=lambda item: item["display_name"].lower())
+
+    return {
+        "summary": {
+            "total_active_teachers": len(teacher_profiles),
+            "teachers_with_active_canonical_assignments": len(teachers_with_canonical),
+            "teachers_with_legacy_only_assignment_evidence": len(teachers_with_legacy_only),
+            "teachers_with_no_assignment_evidence": len(teacher_profiles) - len(teachers_with_canonical) - len(teachers_with_legacy_only),
+            "total_active_canonical_classes": int(active_canonical_classes),
+            "classes_with_active_homeroom_assignment": len(classes_with_active_homeroom),
+            "classes_without_active_homeroom_assignment": classes_without_active_homeroom,
+            "active_subject_teacher_assignments": active_subject_teacher_assignments,
+            "canonical_assignment_coverage_percentage": coverage_percentage,
+        },
+        "teachers": breakdown,
+    }
 
 
 # ─────────────────────────────────────────────────────────────────────────────

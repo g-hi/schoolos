@@ -120,6 +120,60 @@ export interface PickupCompleteRequest extends PickupTransitionRequest {
   verification_note: string;
 }
 
+export interface TeacherMyClassesAssignment {
+  assignment_type: "homeroom" | "subject_teacher";
+  subject_id: string | null;
+  subject_code: string | null;
+  subject_name: string | null;
+  start_date: string | null;
+  end_date: string | null;
+}
+
+export interface TeacherMyClassesSchedule {
+  weekly_periods: number;
+  next_period: {
+    day_of_week: number;
+    period_name: string;
+    start_time: string;
+    end_time: string;
+    subject_name?: string | null;
+  } | null;
+}
+
+export interface TeacherMyClassItem {
+  class_id: string;
+  code: string | null;
+  grade_level: string;
+  section: string;
+  academic_year_id: string | null;
+  academic_year: string;
+  campus_id: string | null;
+  campus: string | null;
+  is_active: boolean;
+  student_count: number;
+  assignment_source: "canonical" | "legacy";
+  assignments: TeacherMyClassesAssignment[];
+  schedule: TeacherMyClassesSchedule;
+}
+
+export interface TeacherMyClassesSummary {
+  total_classes: number;
+  homeroom_classes: number;
+  subject_classes: number;
+  canonical_classes: number;
+  legacy_classes: number;
+}
+
+export interface TeacherMyClassesResponse {
+  effective_date: string;
+  teacher: {
+    id: string;
+    display_name: string;
+  };
+  summary: TeacherMyClassesSummary;
+  classes: TeacherMyClassItem[];
+}
+
 // Teacher Pickup Endpoints
 export async function listTeacherPickupRequests(
   query?: { status?: PickupStatus; page?: number; page_size?: number },
@@ -179,6 +233,19 @@ export async function prepareTeacherPickupRequest(
     method: "POST",
     token,
     body: body ?? {},
+  });
+}
+
+export async function getTeacherMyClasses(
+  options?: { effective_date?: string },
+  token?: string | null,
+): Promise<TeacherMyClassesResponse> {
+  return teacherRequest<TeacherMyClassesResponse>("/teacher/my-classes", {
+    method: "GET",
+    token,
+    params: {
+      effective_date: options?.effective_date,
+    },
   });
 }
 

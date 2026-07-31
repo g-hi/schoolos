@@ -49,6 +49,7 @@ from services.gateway.routers.announcements import router as announcements_route
 from services.gateway.routers.master_data import router as master_data_router
 from services.gateway.routers.academic_structure import router as academic_structure_router
 from services.gateway.routers.teacher_assignments import router as teacher_assignments_router
+from services.gateway.routers.teacher_classes import router as teacher_classes_router
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -131,6 +132,7 @@ app.include_router(announcements_router)
 app.include_router(master_data_router)
 app.include_router(academic_structure_router)
 app.include_router(teacher_assignments_router)
+app.include_router(teacher_classes_router)
 
 # =============================================================================
 # ROUTES

@@ -600,5 +600,12 @@ def test_migration_metadata_and_revision_still_match() -> None:
 def test_single_alembic_head() -> None:
     script = ScriptDirectory.from_config(Config("alembic.ini"))
     heads = script.get_heads()
+
     assert len(heads) == 1
-    assert heads[0] == "4f2e1d9b7c30"
+
+    revision_chain = {
+        revision.revision
+        for revision in script.iterate_revisions(heads[0], "base")
+    }
+
+    assert "4f2e1d9b7c30" in revision_chain

@@ -2,11 +2,13 @@ from __future__ import annotations
 
 import uuid
 from dataclasses import dataclass
+from datetime import datetime, timezone
 
 from fastapi import HTTPException, status
-from sqlalchemy import distinct, select
+from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from services.gateway.authorization.teacher_scope import teacher_has_weekly_report_class_scope
 from shared.db.models import Class, Student, Teacher, TimetableEntry, User
 
 
@@ -76,22 +78,14 @@ async def authorize_staff_for_student_action(
     if actor.role != "teacher" or not teacher_profile:
         raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="You do not have access to this resource.")
 
-    # A teacher is authorized if they are the homeroom teacher or explicitly
-    # assigned to this class via timetable entries in the class academic year.
-    if klass.class_teacher_id == teacher_profile.id:
-        return AuthorizedStudentContext(student=student, klass=klass, teacher_profile=teacher_profile)
-
-    timetable_result = await db.execute(
-        select(TimetableEntry.id).where(
-            TimetableEntry.tenant_id == tenant_id,
-            TimetableEntry.class_id == klass.id,
-            TimetableEntry.teacher_id == teacher_profile.id,
-            TimetableEntry.academic_year == klass.academic_year,
-            TimetableEntry.is_active.is_(True),
-        ).limit(1)
+    decision = await teacher_has_weekly_report_class_scope(
+        db=db,
+        tenant_id=tenant_id,
+        teacher_id=teacher_profile.id,
+        klass=klass,
+        effective_date=datetime.now(timezone.utc).date(),
     )
-    timetable_match = timetable_result.scalar_one_or_none()
-    if timetable_match:
+    if decision.authorized:
         return AuthorizedStudentContext(student=student, klass=klass, teacher_profile=teacher_profile)
 
     # Use not-found semantics to reduce student relationship enumeration.
@@ -138,17 +132,28 @@ async def list_staff_authorized_students(
         .where(
             Student.tenant_id == tenant_id,
             Class.tenant_id == tenant_id,
-            (Class.class_teacher_id == teacher_profile.id)
-            | (
-                Class.id.in_(
-                    select(distinct(TimetableEntry.class_id)).where(
-                        TimetableEntry.tenant_id == tenant_id,
-                        TimetableEntry.teacher_id == teacher_profile.id,
-                        TimetableEntry.is_active.is_(True),
-                    )
-                )
-            ),
         )
         .order_by(Student.name)
     )
-    return list(result.all())
+
+    effective_date = datetime.now(timezone.utc).date()
+    authorized_classes: set[uuid.UUID] = set()
+    decisions_by_class: dict[uuid.UUID, bool] = {}
+    rows = list(result.all())
+
+    for _student, klass in rows:
+        cached = decisions_by_class.get(klass.id)
+        if cached is None:
+            decision = await teacher_has_weekly_report_class_scope(
+                db=db,
+                tenant_id=tenant_id,
+                teacher_id=teacher_profile.id,
+                klass=klass,
+                effective_date=effective_date,
+            )
+            decisions_by_class[klass.id] = decision.authorized
+            cached = decision.authorized
+        if cached:
+            authorized_classes.add(klass.id)
+
+    return [(student, klass) for student, klass in rows if klass.id in authorized_classes]

@@ -511,8 +511,37 @@ async def test_arbitrary_teacher_subject_combination_is_rejected() -> None:
                 teacher_id=teacher.id,
                 subject_id=uuid.uuid4(),
                 timetable_entry_id=uuid.uuid4(),
+                effective_date=datetime.now(timezone.utc).date(),
             )
         assert exc_info.value.status_code == 403
+
+
+@pytest.mark.asyncio
+async def test_canonical_subject_scope_blocks_legacy_timetable_authorization() -> None:
+        tenant = SimpleNamespace(id=uuid.uuid4())
+        student = SimpleNamespace(id=uuid.uuid4())
+        klass = SimpleNamespace(id=uuid.uuid4(), academic_year="2026", class_teacher_id=uuid.uuid4())
+        teacher = SimpleNamespace(id=uuid.uuid4())
+        subject_id = uuid.uuid4()
+        timetable_entry_id = uuid.uuid4()
+        db = AsyncMock()
+        db.execute.side_effect = [_result(first=(student, klass)), _result(scalar=teacher)]
+
+        with (
+            patch("services.gateway.routers.appointments.teacher_has_homeroom_scope", new=AsyncMock(return_value=SimpleNamespace(authorized=False, source="canonical"))),
+            patch("services.gateway.routers.appointments.teacher_has_subject_scope", new=AsyncMock(return_value=SimpleNamespace(authorized=False, source="canonical"))),
+        ):
+            with pytest.raises(HTTPException) as exc_info:
+                await _validate_teacher_subject_option(
+                    db=db,
+                    tenant=tenant,
+                    student_id=student.id,
+                    teacher_id=teacher.id,
+                    subject_id=subject_id,
+                    timetable_entry_id=timetable_entry_id,
+                    effective_date=datetime.now(timezone.utc).date(),
+                )
+        assert exc_info.value.status_code == 422
 
 
 @pytest.mark.asyncio

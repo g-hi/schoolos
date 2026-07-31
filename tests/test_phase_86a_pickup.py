@@ -152,6 +152,10 @@ class PickupDbStub:
 
         return _Result(scalar=None, rows=[])
 
+    async def scalar(self, statement):
+        result = await self.execute(statement)
+        return result.scalar_one_or_none()
+
 
 def _app_with_overrides(db: PickupDbStub, tenant: SimpleNamespace, parent: SimpleNamespace | None = None, teacher: SimpleNamespace | None = None, leadership: SimpleNamespace | None = None) -> TestClient:
     app = FastAPI()
@@ -308,6 +312,48 @@ def test_teacher_denied_for_unauthorized_class_student():
 
     client = _app_with_overrides(db, tenant, teacher=teacher_user)
     with _patch_side_effects():
+        response = client.get(f"/teacher/pickup-requests/{pickup.id}")
+
+    assert response.status_code == 403
+
+
+def test_pickup_teacher_id_does_not_bypass_canonical_homeroom_scope():
+    db = PickupDbStub()
+    tenant, parent, teacher_user, _, teacher_profile, student, klass = _seed_parent_context(db)
+
+    other_teacher = SimpleNamespace(id=uuid.uuid4(), tenant_id=tenant.id, user_id=uuid.uuid4())
+    other_class = SimpleNamespace(id=uuid.uuid4(), tenant_id=tenant.id, class_teacher_id=other_teacher.id)
+    db.classes[other_class.id] = other_class
+    db.students[student.id] = SimpleNamespace(id=student.id, tenant_id=tenant.id, class_id=other_class.id)
+
+    pickup = PickupRequest(
+        id=uuid.uuid4(),
+        tenant_id=tenant.id,
+        parent_id=parent.id,
+        student_id=student.id,
+        class_id=other_class.id,
+        teacher_id=teacher_profile.id,
+        channel="app",
+        command_text="pickup",
+        parent_latitude=0.0,
+        parent_longitude=0.0,
+        distance_meters=0.0,
+        geofence_radius_m=150,
+        within_geofence=False,
+        early_pickup=False,
+        status="requested",
+        requested_at=datetime.now(timezone.utc),
+    )
+    db.pickups[pickup.id] = pickup
+
+    client = _app_with_overrides(db, tenant, teacher=teacher_user)
+    with (
+        _patch_side_effects(),
+        patch(
+            "services.gateway.routers.pickup.teacher_has_homeroom_scope",
+            new=AsyncMock(return_value=SimpleNamespace(authorized=False, source="canonical")),
+        ),
+    ):
         response = client.get(f"/teacher/pickup-requests/{pickup.id}")
 
     assert response.status_code == 403

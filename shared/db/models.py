@@ -27,6 +27,7 @@ from sqlalchemy import (
     DateTime,
     Float,
     ForeignKey,
+    Index,
     Integer,
     JSON,
     String,
@@ -222,6 +223,41 @@ class Subject(Base):
 
 
 # ─────────────────────────────────────────────────────────────────────────────
+# SubjectOffering  (canonical subject availability by scope)
+# ─────────────────────────────────────────────────────────────────────────────
+
+class SubjectOffering(Base):
+    __tablename__ = "subject_offerings"
+
+    id:               Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    tenant_id:        Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), ForeignKey("tenants.id", ondelete="CASCADE"), nullable=False)
+    campus_id:        Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), ForeignKey("campuses.id", ondelete="RESTRICT"), nullable=False)
+    academic_year_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), ForeignKey("academic_years.id", ondelete="RESTRICT"), nullable=False)
+    grade_level_id:   Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), ForeignKey("grade_levels.id", ondelete="RESTRICT"), nullable=False)
+    subject_id:       Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), ForeignKey("subjects.id", ondelete="RESTRICT"), nullable=False)
+    is_active:        Mapped[bool]      = mapped_column(Boolean, nullable=False, server_default="true")
+    created_at:       Mapped[datetime]  = mapped_column(DateTime(timezone=True), server_default=func.now(), nullable=False)
+    updated_at:       Mapped[datetime]  = mapped_column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now(), nullable=False)
+
+    __table_args__ = (
+        UniqueConstraint(
+            "tenant_id",
+            "campus_id",
+            "academic_year_id",
+            "grade_level_id",
+            "subject_id",
+            name="uq_subject_offering_scope",
+        ),
+        Index("ix_subject_offerings_tenant_id", "tenant_id"),
+        Index("ix_subject_offerings_campus_id", "campus_id"),
+        Index("ix_subject_offerings_academic_year_id", "academic_year_id"),
+        Index("ix_subject_offerings_grade_level_id", "grade_level_id"),
+        Index("ix_subject_offerings_subject_id", "subject_id"),
+        Index("ix_subject_offerings_is_active", "is_active"),
+    )
+
+
+# ─────────────────────────────────────────────────────────────────────────────
 # Teacher  (extends User)
 # ─────────────────────────────────────────────────────────────────────────────
 
@@ -290,9 +326,55 @@ class Class(Base):
     section:          Mapped[str]            = mapped_column(String(50), nullable=False)
     academic_year:    Mapped[str]            = mapped_column(String(20), nullable=False)
     class_teacher_id: Mapped[uuid.UUID | None] = mapped_column(UUID(as_uuid=True), ForeignKey("teachers.id"), nullable=True)
+    campus_id:        Mapped[uuid.UUID | None] = mapped_column(UUID(as_uuid=True), ForeignKey("campuses.id", ondelete="RESTRICT"), nullable=True)
+    academic_year_id: Mapped[uuid.UUID | None] = mapped_column(UUID(as_uuid=True), ForeignKey("academic_years.id", ondelete="RESTRICT"), nullable=True)
+    grade_level_id:   Mapped[uuid.UUID | None] = mapped_column(UUID(as_uuid=True), ForeignKey("grade_levels.id", ondelete="RESTRICT"), nullable=True)
+    code:             Mapped[str | None]       = mapped_column(String(50), nullable=True)
+    is_active:        Mapped[bool]             = mapped_column(Boolean, nullable=False, server_default="true")
+    updated_at:       Mapped[datetime]         = mapped_column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now(), nullable=False)
 
     __table_args__ = (
-        UniqueConstraint("tenant_id", "grade", "section", "academic_year", name="uq_class_per_tenant"),
+        CheckConstraint(
+            "((campus_id IS NULL AND academic_year_id IS NULL AND grade_level_id IS NULL) OR "
+            "(campus_id IS NOT NULL AND academic_year_id IS NOT NULL AND grade_level_id IS NOT NULL))",
+            name="ck_classes_canonical_scope_all_or_none",
+        ),
+        Index(
+            "uq_classes_legacy_identity",
+            "tenant_id",
+            "grade",
+            "section",
+            "academic_year",
+            unique=True,
+            postgresql_where=((campus_id.is_(None)) & (academic_year_id.is_(None)) & (grade_level_id.is_(None))),
+        ),
+        Index(
+            "uq_classes_canonical_section",
+            "tenant_id",
+            "campus_id",
+            "academic_year_id",
+            "grade_level_id",
+            "section",
+            unique=True,
+            postgresql_where=(
+                (campus_id.is_not(None))
+                & (academic_year_id.is_not(None))
+                & (grade_level_id.is_not(None))
+                & (is_active.is_(True))
+            ),
+        ),
+        Index(
+            "uq_classes_code_per_academic_year",
+            "tenant_id",
+            "academic_year_id",
+            "code",
+            unique=True,
+            postgresql_where=(
+                (academic_year_id.is_not(None))
+                & (code.is_not(None))
+                & (is_active.is_(True))
+            ),
+        ),
     )
 
 

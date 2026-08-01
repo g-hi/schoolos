@@ -9,6 +9,7 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from services.gateway.authorization.teacher_scope import teacher_has_weekly_report_class_scope
+from services.gateway.authorization.student_enrollment_scope import resolve_student_class
 from shared.db.models import Class, Student, Teacher, TimetableEntry, User
 
 
@@ -57,19 +58,33 @@ async def authorize_staff_for_student_action(
         raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="You do not have access to this resource.")
 
     student_result = await db.execute(
-        select(Student, Class)
-        .join(Class, Class.id == Student.class_id)
-        .where(
+        select(Student).where(
             Student.id == student_id,
             Student.tenant_id == tenant_id,
-            Class.tenant_id == tenant_id,
         )
     )
     row = student_result.first()
     if not row:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Student not found.")
+    student = row[0]
 
-    student, klass = row
+    # Resolve class via canonical-first enrollment scope
+    resolution = await resolve_student_class(
+        db=db,
+        tenant_id=tenant_id,
+        student_id=student_id,
+        effective_date=datetime.now(timezone.utc).date(),
+    )
+    if resolution.class_id is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Student not found.")
+
+    klass_result = await db.execute(
+        select(Class).where(Class.id == resolution.class_id, Class.tenant_id == tenant_id)
+    )
+    klass_row = klass_result.first()
+    if not klass_row:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Student not found.")
+    klass = klass_row[0]
     teacher_profile = await resolve_teacher_profile_for_user(db=db, tenant_id=tenant_id, user=actor)
 
     if actor.role in _LEADERSHIP_ROLES:

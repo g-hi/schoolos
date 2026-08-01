@@ -40,11 +40,13 @@ from shared.auth.dependencies import (
 )
 from shared.auth.tenant import resolve_tenant
 from shared.db.connection import get_db, set_tenant_context
+from services.gateway.authorization.student_enrollment_scope import resolve_student_class
 from shared.db.models import (
     Class,
     Period,
     PickupRequest,
     Student,
+    StudentEnrollment,
     StudentParent,
     Teacher,
     TimetableEntry,
@@ -123,12 +125,13 @@ async def get_parent_me(
 async def _get_authorized_students(parent_id: uuid.UUID, tenant_id: uuid.UUID, db: AsyncSession):
     """
     Returns all students that the authenticated parent is authorized to view,
-    scoped to the tenant.
+    scoped to the tenant.  Class display uses canonical-first resolution:
+    active canonical enrollment is preferred; Student.class_id is used only
+    when no canonical enrollment history exists for the student.
     """
     result = await db.execute(
-        select(StudentParent, Student, Class)
+        select(StudentParent, Student)
         .join(Student, Student.id == StudentParent.student_id)
-        .join(Class, Class.id == Student.class_id)
         .where(
             StudentParent.parent_id == parent_id,
             Student.tenant_id == tenant_id,
@@ -138,10 +141,22 @@ async def _get_authorized_students(parent_id: uuid.UUID, tenant_id: uuid.UUID, d
     rows = result.all()
 
     students = []
-    for sp, student, cls in rows:
-        # Resolve homeroom teacher name
+    for sp, student in rows:
+        resolution = await resolve_student_class(
+            db=db,
+            tenant_id=tenant_id,
+            student_id=student.id,
+        )
+
+        cls: Class | None = None
+        if resolution.class_id is not None:
+            cls = await db.scalar(
+                select(Class).where(Class.id == resolution.class_id, Class.tenant_id == tenant_id)
+            )
+
+        # Resolve homeroom teacher name from the resolved class
         homeroom_teacher_name = None
-        if cls.class_teacher_id:
+        if cls is not None and cls.class_teacher_id:
             t_result = await db.execute(
                 select(Teacher, User)
                 .join(User, User.id == Teacher.user_id)
@@ -155,14 +170,16 @@ async def _get_authorized_students(parent_id: uuid.UUID, tenant_id: uuid.UUID, d
             "student_id": str(student.id),
             "name": student.name,
             "student_code": student.student_code,
-            "grade": cls.grade,
-            "section": cls.section,
-            "class_name": f"{cls.grade}-{cls.section}",
+            "grade": cls.grade if cls else None,
+            "section": cls.section if cls else None,
+            "class_name": f"{cls.grade}-{cls.section}" if cls else None,
             "homeroom_teacher": homeroom_teacher_name,
             "is_primary_guardian": bool(sp.is_primary),
             "can_pickup": bool(sp.can_pickup),
             "can_view_academics": bool(sp.can_view_academics),
             "can_view_behaviour": bool(sp.can_view_behaviour),
+            "enrollment_source": resolution.source,
+            "enrollment_status": resolution.status,
         })
     return students
 
@@ -194,20 +211,28 @@ async def get_student_overview(
         student_id=student_id, parent=parent, tenant=tenant, db=db
     )
 
-    # Load student + class
-    result = await db.execute(
-        select(Student, Class)
-        .join(Class, Class.id == Student.class_id)
-        .where(Student.id == student_id, Student.tenant_id == tenant.id)
+    # Load student using canonical-first class resolution
+    student = await db.scalar(
+        select(Student).where(Student.id == student_id, Student.tenant_id == tenant.id)
     )
-    row = result.first()
-    if not row:
+    if not student:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Student not found.")
-    student, cls = row
 
-    # Homeroom teacher
+    resolution = await resolve_student_class(
+        db=db,
+        tenant_id=tenant.id,
+        student_id=student.id,
+    )
+
+    cls: Class | None = None
+    if resolution.class_id is not None:
+        cls = await db.scalar(
+            select(Class).where(Class.id == resolution.class_id, Class.tenant_id == tenant.id)
+        )
+
+    # Homeroom teacher from resolved class
     homeroom_teacher_name = None
-    if cls.class_teacher_id:
+    if cls is not None and cls.class_teacher_id:
         t_result = await db.execute(
             select(Teacher, User)
             .join(User, User.id == Teacher.user_id)
@@ -232,10 +257,12 @@ async def get_student_overview(
         "student_id": str(student.id),
         "name": student.name,
         "student_code": student.student_code,
-        "grade": cls.grade,
-        "section": cls.section,
-        "class_name": f"{cls.grade}-{cls.section}",
+        "grade": cls.grade if cls else None,
+        "section": cls.section if cls else None,
+        "class_name": f"{cls.grade}-{cls.section}" if cls else None,
         "homeroom_teacher": homeroom_teacher_name,
+        "enrollment_source": resolution.source,
+        "enrollment_status": resolution.status,
         # Modules that are not yet implemented return explicit availability state.
         "academics": _module_unavailable("Academic module not yet configured.")
         if not check_academic_access(sp)

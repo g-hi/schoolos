@@ -211,6 +211,7 @@ async def test_active_canonical_homeroom_and_subject_returned_deduped() -> None:
     homeroom = SimpleNamespace(assignment_type="homeroom", start_date=date(2026, 1, 1), end_date=None)
     subject_assignment = SimpleNamespace(assignment_type="subject_teacher", start_date=date(2026, 1, 1), end_date=None)
 
+    s1, s2 = uuid.uuid4(), uuid.uuid4()
     db = AsyncMock()
     db.scalar.return_value = teacher_profile
     db.execute.side_effect = [
@@ -218,8 +219,11 @@ async def test_active_canonical_homeroom_and_subject_returned_deduped() -> None:
         _Result(rows=[(homeroom, klass, ay, campus, None), (subject_assignment, klass, ay, campus, subject)]),
         _Result(rows=[]),
         _Result(rows=[]),
-        _Result(rows=[(class_id, 28)]),
-        _Result(rows=[(class_id, 6)]),
+        # list_class_student_ids for class_id
+        _Result(rows=[(s1,), (s2,)]),   # canonical active enrollments
+        _Result(rows=[(s1,), (s2,)]),   # any canonical history
+        _Result(rows=[]),               # legacy fallback (all have canonical history)
+        _Result(rows=[(class_id, 6)]),  # weekly_period_counts
     ]
 
     with patch("services.gateway.routers.teacher_classes.set_tenant_context", new=AsyncMock()):
@@ -229,7 +233,7 @@ async def test_active_canonical_homeroom_and_subject_returned_deduped() -> None:
     assert response["summary"]["canonical_classes"] == 1
     assert response["summary"]["homeroom_classes"] == 1
     assert response["summary"]["subject_classes"] == 1
-    assert response["classes"][0]["student_count"] == 28
+    assert response["classes"][0]["student_count"] == 2
     assert response["classes"][0]["schedule"]["weekly_periods"] == 6
     assert len(response["classes"][0]["assignments"]) == 2
 
@@ -288,6 +292,7 @@ async def test_no_canonical_history_allows_legacy_class_teacher_and_timetable() 
     class_subject = _teacher_class(tenant_id=tenant.id, class_id=uuid.uuid4(), code="4B")
     subject = SimpleNamespace(id=uuid.uuid4(), code="ENG", name="English")
 
+    s1, s2, s3 = uuid.uuid4(), uuid.uuid4(), uuid.uuid4()
     db = AsyncMock()
     db.scalar.return_value = teacher_profile
     db.execute.side_effect = [
@@ -295,8 +300,15 @@ async def test_no_canonical_history_allows_legacy_class_teacher_and_timetable() 
         _Result(rows=[]),
         _Result(rows=[(class_home, None, None)]),
         _Result(rows=[(class_subject, None, None, subject)]),
-        _Result(rows=[(class_home.id, 22), (class_subject.id, 24)]),
-        _Result(rows=[(class_home.id, 0), (class_subject.id, 5)]),
+        # list_class_student_ids for class_home
+        _Result(rows=[]),               # canonical active (none)
+        _Result(rows=[]),               # any canonical history (none)
+        _Result(rows=[(s1,), (s2,)]),   # legacy fallback
+        # list_class_student_ids for class_subject
+        _Result(rows=[]),               # canonical active (none)
+        _Result(rows=[]),               # any canonical history (none)
+        _Result(rows=[(s3,)]),          # legacy fallback
+        _Result(rows=[(class_home.id, 0), (class_subject.id, 5)]),  # weekly_period_counts
     ]
 
     with patch("services.gateway.routers.teacher_classes.set_tenant_context", new=AsyncMock()):
@@ -343,6 +355,7 @@ async def test_assignment_details_remain_distinct_for_multiple_subjects() -> Non
     assignment_a = SimpleNamespace(assignment_type="subject_teacher", start_date=date(2026, 1, 1), end_date=None)
     assignment_b = SimpleNamespace(assignment_type="subject_teacher", start_date=date(2026, 1, 1), end_date=None)
 
+    s1 = uuid.uuid4()
     db = AsyncMock()
     db.scalar.return_value = teacher_profile
     db.execute.side_effect = [
@@ -350,8 +363,11 @@ async def test_assignment_details_remain_distinct_for_multiple_subjects() -> Non
         _Result(rows=[(assignment_a, klass, ay, None, subject_a), (assignment_b, klass, ay, None, subject_b)]),
         _Result(rows=[]),
         _Result(rows=[]),
-        _Result(rows=[(class_id, 20)]),
-        _Result(rows=[(class_id, 4)]),
+        # list_class_student_ids for class_id
+        _Result(rows=[(s1,)]),   # canonical active enrollments
+        _Result(rows=[(s1,)]),   # any canonical history
+        _Result(rows=[]),        # legacy fallback
+        _Result(rows=[(class_id, 4)]),  # weekly_period_counts
     ]
 
     with patch("services.gateway.routers.teacher_classes.set_tenant_context", new=AsyncMock()):

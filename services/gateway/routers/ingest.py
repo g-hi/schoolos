@@ -47,8 +47,10 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from shared.auth.tenant import resolve_tenant
 from shared.db.connection import get_db, set_tenant_context
 from shared.db.models import (
+    AcademicYear,
     Class,
     Student,
+    StudentEnrollment,
     StudentParent,
     Subject,
     Teacher,
@@ -316,6 +318,18 @@ async def ingest_students(
 
     The class (grade + section + academic_year) must already exist.
     Run /ingest/classes first.
+
+    Dual-write behaviour:
+    - Legacy class (no canonical scope):  Student.class_id is set normally.
+      No StudentEnrollment is created.
+    - Canonical class (campus_id + academic_year_id + grade_level_id all set):
+      Student.class_id is set AND an active StudentEnrollment is created.
+      enrolled_on defaults to AcademicYear.start_date.
+      Repeated import of the same student into the same active canonical
+      enrollment is idempotent (counted as skipped/unchanged).
+      If the student already has a DIFFERENT active enrollment in the same
+      academic year, the row is rejected with a controlled error — no
+      automatic transfer is performed.
     """
     await set_tenant_context(db, tenant.id)
     rows = _parse_csv(await file.read())
@@ -330,41 +344,148 @@ async def ingest_students(
             continue
 
         # Resolve class
-        class_id = await db.scalar(
-            select(Class.id).where(
+        klass = await db.scalar(
+            select(Class).where(
                 Class.tenant_id == tenant.id,
                 Class.grade == row["grade"],
                 Class.section == row["section"],
                 Class.academic_year == row["academic_year"],
             )
         )
-        if not class_id:
+        if not klass:
             errors.append({"row": i, "error": f"class not found: {row['grade']} / {row['section']} ({row['academic_year']})"})
             skipped += 1
             continue
 
+        is_canonical = (
+            klass.campus_id is not None
+            and klass.academic_year_id is not None
+            and klass.grade_level_id is not None
+            and klass.is_active
+        )
+
         student_code = row.get("student_code") or None
 
         # Duplicate check by student_code if provided
+        existing_student: Student | None = None
         if student_code:
-            exists = await db.scalar(
-                select(Student.id).where(
+            existing_student = await db.scalar(
+                select(Student).where(
                     Student.tenant_id == tenant.id,
                     Student.student_code == student_code,
                 )
             )
-            if exists:
+
+        if existing_student is not None:
+            # Student already exists; only handle canonical enrollment idempotency
+            if not is_canonical:
                 errors.append({"row": i, "error": f"duplicate student_code: {student_code}"})
                 skipped += 1
                 continue
 
-        db.add(Student(
+            # Canonical: check if already enrolled in this exact class/year
+            academic_year = await db.scalar(
+                select(AcademicYear).where(
+                    AcademicYear.id == klass.academic_year_id,
+                    AcademicYear.tenant_id == tenant.id,
+                    AcademicYear.is_active.is_(True),
+                )
+            )
+            if academic_year is None:
+                errors.append({"row": i, "error": "canonical class academic year not found or inactive"})
+                skipped += 1
+                continue
+
+            same_class_active = await db.scalar(
+                select(StudentEnrollment.id).where(
+                    StudentEnrollment.tenant_id == tenant.id,
+                    StudentEnrollment.student_id == existing_student.id,
+                    StudentEnrollment.class_id == klass.id,
+                    StudentEnrollment.academic_year_id == klass.academic_year_id,
+                    StudentEnrollment.status == "active",
+                )
+            )
+            if same_class_active is not None:
+                # Idempotent — already enrolled in this class
+                skipped += 1
+                continue
+
+            # Check for a conflicting active enrollment in the same year
+            conflict_enrollment = await db.scalar(
+                select(StudentEnrollment.id).where(
+                    StudentEnrollment.tenant_id == tenant.id,
+                    StudentEnrollment.student_id == existing_student.id,
+                    StudentEnrollment.academic_year_id == klass.academic_year_id,
+                    StudentEnrollment.status == "active",
+                )
+            )
+            if conflict_enrollment is not None:
+                errors.append({
+                    "row": i,
+                    "error": (
+                        f"student '{student_code}' already has an active enrollment in a different "
+                        "class for this academic year. Use the transfer endpoint to move them."
+                    ),
+                })
+                skipped += 1
+                continue
+
+            # Create enrollment for existing student into canonical class
+            existing_student.class_id = klass.id
+            enrollment = StudentEnrollment(
+                id=uuid.uuid4(),
+                tenant_id=tenant.id,
+                academic_year_id=klass.academic_year_id,
+                student_id=existing_student.id,
+                class_id=klass.id,
+                grade_level_id=klass.grade_level_id,
+                status="active",
+                enrolled_on=academic_year.start_date,
+                exited_on=None,
+                exit_reason=None,
+            )
+            db.add(enrollment)
+            inserted += 1
+            continue
+
+        # New student
+        student = Student(
             id=uuid.uuid4(),
             tenant_id=tenant.id,
-            class_id=class_id,
+            class_id=klass.id,
             name=row["name"],
             student_code=student_code,
-        ))
+        )
+        db.add(student)
+        await db.flush()  # ensure student.id is available for enrollment FK
+
+        if is_canonical:
+            academic_year = await db.scalar(
+                select(AcademicYear).where(
+                    AcademicYear.id == klass.academic_year_id,
+                    AcademicYear.tenant_id == tenant.id,
+                    AcademicYear.is_active.is_(True),
+                )
+            )
+            if academic_year is None:
+                errors.append({"row": i, "error": "canonical class academic year not found or inactive"})
+                skipped += 1
+                continue
+
+            enrollment = StudentEnrollment(
+                id=uuid.uuid4(),
+                tenant_id=tenant.id,
+                academic_year_id=klass.academic_year_id,
+                student_id=student.id,
+                class_id=klass.id,
+                grade_level_id=klass.grade_level_id,
+                status="active",
+                enrolled_on=academic_year.start_date,
+                exited_on=None,
+                exit_reason=None,
+            )
+            db.add(enrollment)
+
         inserted += 1
 
     await db.commit()

@@ -44,6 +44,21 @@ export default function DataPage() {
         </p>
       </div>
 
+      <div className="rounded-xl border border-indigo-200 bg-indigo-50 p-4 text-sm text-indigo-900 space-y-1">
+        <p className="font-medium">Before importing canonical classes or students, configure your Academic Structure.</p>
+        <ul className="list-disc list-inside space-y-0.5 text-indigo-800">
+          <li>Canonical classes support full enrolment history; legacy classes (CSV-only) do not.</li>
+          <li>Students imported to legacy classes will not have canonical enrolment tracking.</li>
+          <li>If a student already has an active canonical enrolment in a different class, the CSV row will be rejected — use the <a href="/academic-structure" className="underline font-medium">transfer workflow</a> instead.</li>
+          <li>CSV import preview and history will be available in Phase 9D.</li>
+        </ul>
+        <p className="pt-1">
+          <a href="/academic-structure" className="inline-flex items-center gap-1 text-indigo-700 font-medium hover:underline">
+            🏗️ Go to Academic Structure →
+          </a>
+        </p>
+      </div>
+
       <div className="space-y-4">
         {endpoints.map((ep) => {
           const res = results[ep.label];

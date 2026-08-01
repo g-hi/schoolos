@@ -500,11 +500,15 @@ async def test_weekly_reports_teacher_scope_prefers_canonical_assignments() -> N
 
     student_result = MagicMock()
     student_result.first.return_value = (student, klass)
+    enrollment_result = MagicMock()
+    enrollment_result.all.return_value = []
+    klass_result = MagicMock()
+    klass_result.first.return_value = (klass,)
     teacher_result = MagicMock()
     teacher_result.scalar_one_or_none.return_value = teacher_profile
 
     db = AsyncMock()
-    db.execute.side_effect = [student_result, teacher_result]
+    db.execute.side_effect = [student_result, enrollment_result, klass_result, teacher_result]
 
     with patch(
         "services.gateway.weekly_reports.authorization.teacher_has_weekly_report_class_scope",

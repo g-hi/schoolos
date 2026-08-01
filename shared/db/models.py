@@ -460,6 +460,51 @@ class Student(Base):
 
 
 # ─────────────────────────────────────────────────────────────────────────────
+# StudentEnrollment  (canonical student enrollment history)
+# ─────────────────────────────────────────────────────────────────────────────
+
+class StudentEnrollment(Base):
+    __tablename__ = "student_enrollments"
+
+    id:               Mapped[uuid.UUID]          = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    tenant_id:        Mapped[uuid.UUID]          = mapped_column(UUID(as_uuid=True), ForeignKey("tenants.id", ondelete="CASCADE"), nullable=False, index=True)
+    academic_year_id: Mapped[uuid.UUID]          = mapped_column(UUID(as_uuid=True), ForeignKey("academic_years.id", ondelete="RESTRICT"), nullable=False, index=True)
+    student_id:       Mapped[uuid.UUID]          = mapped_column(UUID(as_uuid=True), ForeignKey("students.id", ondelete="RESTRICT"), nullable=False, index=True)
+    class_id:         Mapped[uuid.UUID]          = mapped_column(UUID(as_uuid=True), ForeignKey("classes.id", ondelete="RESTRICT"), nullable=False, index=True)
+    grade_level_id:   Mapped[uuid.UUID]          = mapped_column(UUID(as_uuid=True), ForeignKey("grade_levels.id", ondelete="RESTRICT"), nullable=False, index=True)
+    status:           Mapped[str]                = mapped_column(String(20), nullable=False, server_default="active", index=True)
+    enrolled_on:      Mapped[date_type]          = mapped_column(Date, nullable=False)
+    exited_on:        Mapped[date_type | None]   = mapped_column(Date, nullable=True)
+    exit_reason:      Mapped[str | None]         = mapped_column(Text, nullable=True)
+    created_at:       Mapped[datetime]           = mapped_column(DateTime(timezone=True), server_default=func.now(), nullable=False)
+    updated_at:       Mapped[datetime]           = mapped_column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now(), nullable=False)
+
+    __table_args__ = (
+        CheckConstraint("status IN ('active', 'transferred', 'withdrawn', 'completed')", name="ck_student_enrollments_status"),
+        CheckConstraint(
+            "(status = 'active' AND exited_on IS NULL) OR "
+            "(status IN ('transferred', 'withdrawn', 'completed') AND exited_on IS NOT NULL)",
+            name="ck_student_enrollments_exit_presence",
+        ),
+        CheckConstraint("exited_on IS NULL OR exited_on >= enrolled_on", name="ck_student_enrollments_date_range"),
+        Index(
+            "uq_student_enrollments_active_student_year",
+            "tenant_id",
+            "academic_year_id",
+            "student_id",
+            unique=True,
+            postgresql_where=(status == "active"),
+        ),
+        Index("ix_student_enrollments_tenant_id", "tenant_id"),
+        Index("ix_student_enrollments_academic_year_id", "academic_year_id"),
+        Index("ix_student_enrollments_student_id", "student_id"),
+        Index("ix_student_enrollments_class_id", "class_id"),
+        Index("ix_student_enrollments_grade_level_id", "grade_level_id"),
+        Index("ix_student_enrollments_status", "status"),
+    )
+
+
+# ─────────────────────────────────────────────────────────────────────────────
 # StudentParent  (many-to-many: students ↔ parent users)
 # ─────────────────────────────────────────────────────────────────────────────
 

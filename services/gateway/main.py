@@ -41,7 +41,9 @@ from services.gateway.routers.exam_marking import router as exam_marking_router
 from services.gateway.routers.auth import router as auth_router
 from services.gateway.routers.parent import router as parent_router
 from services.gateway.routers.parent_assistant import router as parent_assistant_router
+from services.gateway.routers.families import leadership_router as leadership_families_router
 from services.gateway.routers.families import router as families_router
+from services.gateway.routers.people import router as people_router
 from services.gateway.routers.weekly_reports import router as weekly_reports_router
 from services.gateway.routers.parent_reports import router as parent_reports_router
 from services.gateway.routers.appointments import router as appointments_router
@@ -126,6 +128,8 @@ app.include_router(auth_router)
 app.include_router(parent_router)
 app.include_router(parent_assistant_router)
 app.include_router(families_router)
+app.include_router(leadership_families_router)
+app.include_router(people_router)
 app.include_router(weekly_reports_router)
 app.include_router(parent_reports_router)
 app.include_router(appointments_router)

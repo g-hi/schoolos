@@ -199,6 +199,44 @@ class User(Base):
     )
 
 
+class AccountInvitation(Base):
+    """
+    One-time account setup invitation for teacher/parent accounts.
+
+    Raw invitation tokens are never stored. Only token_hash (sha256 hex) is
+    persisted. Invitation state is derived from accepted_at/revoked_at/expires_at.
+    """
+
+    __tablename__ = "account_invitations"
+
+    id:                 Mapped[uuid.UUID]        = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    tenant_id:          Mapped[uuid.UUID]        = mapped_column(UUID(as_uuid=True), ForeignKey("tenants.id", ondelete="CASCADE"), nullable=False, index=True)
+    user_id:            Mapped[uuid.UUID]        = mapped_column(UUID(as_uuid=True), ForeignKey("users.id", ondelete="RESTRICT"), nullable=False, index=True)
+    invited_email:      Mapped[str]              = mapped_column(String(255), nullable=False)
+    role:               Mapped[str]              = mapped_column(String(50), nullable=False)
+    token_hash:         Mapped[str]              = mapped_column(String(64), nullable=False, unique=True)
+    expires_at:         Mapped[datetime]         = mapped_column(DateTime(timezone=True), nullable=False, index=True)
+    accepted_at:        Mapped[datetime | None]  = mapped_column(DateTime(timezone=True), nullable=True)
+    revoked_at:         Mapped[datetime | None]  = mapped_column(DateTime(timezone=True), nullable=True)
+    created_by_user_id: Mapped[uuid.UUID]        = mapped_column(UUID(as_uuid=True), ForeignKey("users.id", ondelete="RESTRICT"), nullable=False, index=True)
+    created_at:         Mapped[datetime]         = mapped_column(DateTime(timezone=True), server_default=func.now(), nullable=False)
+    updated_at:         Mapped[datetime]         = mapped_column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now(), nullable=False)
+
+    __table_args__ = (
+        CheckConstraint("accepted_at IS NULL OR revoked_at IS NULL", name="ck_account_invitations_accepted_or_revoked"),
+        CheckConstraint("expires_at > created_at", name="ck_account_invitations_expires_after_created"),
+        CheckConstraint("role IN ('school_admin','principal','teacher','parent','staff')", name="ck_account_invitations_role"),
+        CheckConstraint("invited_email = lower(invited_email)", name="ck_account_invitations_email_normalized"),
+        Index(
+            "uq_account_invitations_pending_per_user",
+            "tenant_id",
+            "user_id",
+            unique=True,
+            postgresql_where=and_(accepted_at.is_(None), revoked_at.is_(None)),
+        ),
+    )
+
+
 # ─────────────────────────────────────────────────────────────────────────────
 # Subject
 # ─────────────────────────────────────────────────────────────────────────────
@@ -540,6 +578,9 @@ class StudentParent(Base):
     can_pickup:          Mapped[bool]             = mapped_column(Boolean, nullable=False, server_default="true")
     can_view_academics:  Mapped[bool]             = mapped_column(Boolean, nullable=False, server_default="true")
     can_view_behaviour:  Mapped[bool]             = mapped_column(Boolean, nullable=False, server_default="true")
+    is_active:           Mapped[bool]             = mapped_column(Boolean, nullable=False, server_default="true")
+    created_at:          Mapped[datetime]         = mapped_column(DateTime(timezone=True), server_default=func.now(), nullable=False)
+    updated_at:          Mapped[datetime]         = mapped_column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now(), nullable=False)
 
     student: Mapped["Student"] = relationship("Student", back_populates="parents")
     parent:  Mapped["User"]    = relationship("User")

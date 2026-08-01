@@ -43,6 +43,7 @@ import uuid
 from typing import Callable
 
 from fastapi import Depends, HTTPException, Request, status
+from sqlalchemy import or_
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
@@ -145,6 +146,11 @@ async def resolve_family(
     from shared.db.models import StudentParent
     from shared.db.parent_models import Family
 
+    active_relationship = or_(
+        StudentParent.is_active.is_(True),
+        StudentParent.is_active.is_(None),
+    )
+
     # Validate tenant consistency
     if parent.tenant_id != tenant.id:
         raise HTTPException(
@@ -159,6 +165,7 @@ async def resolve_family(
         .join(StudentParent, StudentParent.family_id == Family.id)
         .where(
             StudentParent.parent_id == parent.id,
+            active_relationship,
             Family.tenant_id == tenant.id,
             Family.is_active.is_(True),
         )
@@ -197,12 +204,18 @@ async def validate_parent_student_access(
     """
     from shared.db.models import StudentParent, Student
 
+    active_relationship = or_(
+        StudentParent.is_active.is_(True),
+        StudentParent.is_active.is_(None),
+    )
+
     result = await db.execute(
         select(StudentParent)
         .join(Student, Student.id == StudentParent.student_id)
         .where(
             StudentParent.student_id == student_id,
             StudentParent.parent_id == parent.id,
+            active_relationship,
             Student.tenant_id == tenant.id,
         )
     )

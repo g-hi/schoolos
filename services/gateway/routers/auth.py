@@ -24,8 +24,10 @@ For production, an administrator provisioning endpoint is required
 
 from __future__ import annotations
 
+import hashlib
 import logging
 import time
+from datetime import datetime, timezone
 from collections import defaultdict
 from threading import Lock
 
@@ -39,7 +41,7 @@ from services.gateway.ai.audit import log_action
 from shared.auth.jwt import create_access_token, get_current_user
 from shared.auth.tenant import resolve_tenant
 from shared.db.connection import get_db, set_tenant_context
-from shared.db.models import Tenant, User
+from shared.db.models import AccountInvitation, Tenant, User
 
 logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/auth", tags=["Authentication"])
@@ -92,6 +94,11 @@ class TokenResponse(BaseModel):
     access_token: str
     token_type: str = "bearer"
     expires_in: int  # seconds
+
+
+class AcceptInvitationRequest(BaseModel):
+    token: str
+    new_password: str
 
 
 class MeResponse(BaseModel):
@@ -234,3 +241,107 @@ async def me(
         tenant_name=tenant.name,
         is_active=bool(current_user.is_active),
     )
+
+
+def _normalize_email(value: str | None) -> str:
+    return (value or "").strip().lower()
+
+
+def _validate_new_password(password: str) -> None:
+    if len(password) < 8:
+        raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail="Password must be at least 8 characters.")
+    if not any(ch.isupper() for ch in password):
+        raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail="Password must include an uppercase letter.")
+    if not any(ch.islower() for ch in password):
+        raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail="Password must include a lowercase letter.")
+    if not any(ch.isdigit() for ch in password):
+        raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail="Password must include a number.")
+
+
+@router.post("/accept-invitation", summary="Accept account invitation and set password")
+async def accept_invitation(
+    body: AcceptInvitationRequest,
+    db: AsyncSession = Depends(get_db),
+):
+    raw_token = body.token.strip()
+    if not raw_token:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Invalid token.")
+
+    _validate_new_password(body.new_password)
+
+    token_hash = hashlib.sha256(raw_token.encode("utf-8")).hexdigest()
+    invitation = await db.scalar(
+        select(AccountInvitation).where(AccountInvitation.token_hash == token_hash)
+    )
+    if invitation is None:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Invalid token.")
+
+    now = datetime.now(timezone.utc)
+    if invitation.revoked_at is not None:
+        raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="Invitation has been revoked.")
+    if invitation.accepted_at is not None:
+        raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="Invitation has already been used.")
+    if invitation.expires_at <= now:
+        raise HTTPException(status_code=status.HTTP_410_GONE, detail="Invitation has expired.")
+
+    await set_tenant_context(db, invitation.tenant_id)
+
+    tenant = await db.scalar(
+        select(Tenant).where(Tenant.id == invitation.tenant_id)
+    )
+    if tenant is None or not tenant.is_active:
+        raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="Tenant is inactive.")
+
+    user = await db.scalar(
+        select(User).where(
+            User.id == invitation.user_id,
+            User.tenant_id == invitation.tenant_id,
+        )
+    )
+    if user is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Target account not found.")
+
+    if _normalize_email(user.email) != _normalize_email(invitation.invited_email):
+        raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="Invitation email does not match account email.")
+    if user.role != invitation.role:
+        raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="Invitation role mismatch.")
+
+    user.password_hash = _pwd_context.hash(body.new_password)
+    user.is_active = True
+    invitation.accepted_at = now
+
+    # Invalidate any other pending invitation for this user.
+    other_pending = (
+        await db.execute(
+            select(AccountInvitation).where(
+                AccountInvitation.tenant_id == invitation.tenant_id,
+                AccountInvitation.user_id == invitation.user_id,
+                AccountInvitation.id != invitation.id,
+                AccountInvitation.accepted_at.is_(None),
+                AccountInvitation.revoked_at.is_(None),
+            )
+        )
+    ).scalars().all()
+    for pending in other_pending:
+        pending.revoked_at = now
+
+    await log_action(
+        db=db,
+        tenant_id=invitation.tenant_id,
+        action="invitation.accepted",
+        entity_type="AccountInvitation",
+        entity_id=invitation.id,
+        actor_id=user.id,
+        details={
+            "user_id": str(user.id),
+            "role": user.role,
+        },
+    )
+
+    await db.commit()
+    return {
+        "status": "accepted",
+        "user_id": str(user.id),
+        "tenant_id": str(invitation.tenant_id),
+        "role": user.role,
+    }

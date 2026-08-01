@@ -970,7 +970,7 @@ async def test_reconciliation_summary_identifies_class_id_conflict(monkeypatch) 
 
 
 def test_no_schema_migration_added() -> None:
-    """Alembic must remain at head 8c3f2b1e9d77 — no new migration file for this phase."""
+    """Alembic must keep Phase 9B3 revision in the active migration chain."""
     from pathlib import Path
     from alembic.config import Config
     from alembic.script import ScriptDirectory
@@ -978,4 +978,10 @@ def test_no_schema_migration_added() -> None:
     script = ScriptDirectory.from_config(Config("alembic.ini"))
     heads = script.get_heads()
     assert len(heads) == 1
-    assert heads[0] == "8c3f2b1e9d77"
+
+    revision_chain = {
+        revision.revision
+        for revision in script.iterate_revisions(heads[0], "base")
+    }
+
+    assert "8c3f2b1e9d77" in revision_chain

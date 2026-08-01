@@ -118,6 +118,12 @@ export default function LoginPanel() {
         >
           {submitting ? "Signing in..." : "Sign In"}
         </button>
+
+        <div className="text-center">
+          <a href="/activate-account" className="text-sm text-indigo-700 underline">
+            Activate invited account
+          </a>
+        </div>
       </form>
     </section>
   );

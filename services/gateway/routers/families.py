@@ -19,9 +19,13 @@ import uuid
 from datetime import datetime, timezone
 
 from fastapi import APIRouter, Depends, HTTPException, Query, status
+from pydantic import BaseModel, ConfigDict
+from sqlalchemy import func, or_
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from services.gateway.ai.audit import log_action
+from shared.auth.dependencies import resolve_authenticated_leadership
 from shared.auth.dependencies import resolve_authenticated_parent, resolve_family
 from shared.auth.tenant import resolve_tenant
 from shared.db.connection import get_db, set_tenant_context
@@ -29,6 +33,31 @@ from shared.db.models import Student, StudentParent, Tenant, User
 from shared.db.parent_models import FamilyTimelineEvent, Family
 
 router = APIRouter(prefix="/families", tags=["Families"])
+leadership_router = APIRouter(prefix="/leadership/families", tags=["Families"])
+
+SUPPORTED_RELATIONSHIP_TYPES = {"mother", "father", "guardian", "sponsor", "other"}
+
+
+def _active_relationship_clause():
+    # Compatibility: pre-lifecycle rows are considered active when is_active is NULL.
+    return or_(StudentParent.is_active.is_(True), StudentParent.is_active.is_(None))
+
+
+class RelationshipCreateRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    parent_id: uuid.UUID
+    student_id: uuid.UUID
+    relationship_type: str
+    is_primary: bool = False
+
+
+class RelationshipUpdateRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    relationship_type: str | None = None
+    is_primary: bool | None = None
+    is_active: bool | None = None
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -223,4 +252,258 @@ async def get_family_timeline(
         ],
         "next_cursor": next_cursor,
         "has_more": has_more,
+    }
+
+
+@leadership_router.get("/relationships", summary="List family relationships")
+async def list_relationships(
+    student_id: uuid.UUID | None = Query(default=None),
+    parent_id: uuid.UUID | None = Query(default=None),
+    active_only: bool = Query(default=True),
+    tenant: Tenant = Depends(resolve_tenant),
+    actor: User = Depends(resolve_authenticated_leadership),
+    db: AsyncSession = Depends(get_db),
+):
+    await set_tenant_context(db, tenant.id)
+
+    stmt = (
+        select(StudentParent, Student, User)
+        .join(Student, Student.id == StudentParent.student_id)
+        .join(User, User.id == StudentParent.parent_id)
+        .where(Student.tenant_id == tenant.id, User.tenant_id == tenant.id)
+    )
+    if student_id is not None:
+        stmt = stmt.where(StudentParent.student_id == student_id)
+    if parent_id is not None:
+        stmt = stmt.where(StudentParent.parent_id == parent_id)
+    if active_only:
+        stmt = stmt.where(_active_relationship_clause())
+
+    rows = (await db.execute(stmt.order_by(Student.name.asc(), User.name.asc()))).all()
+    return [
+        {
+            "relationship_id": f"{str(sp.student_id)}:{str(sp.parent_id)}",
+            "student_id": str(student.id),
+            "student_name": student.name,
+            "parent_id": str(parent.id),
+            "parent_name": parent.name,
+            "relationship_type": sp.relation_type,
+            "is_primary": bool(sp.is_primary),
+            "is_active": True if sp.is_active is None else bool(sp.is_active),
+            "created_at": getattr(sp, "created_at", None),
+            "updated_at": getattr(sp, "updated_at", None),
+        }
+        for sp, student, parent in rows
+    ]
+
+
+@leadership_router.post("/relationships", summary="Create family relationship")
+async def create_relationship(
+    body: RelationshipCreateRequest,
+    tenant: Tenant = Depends(resolve_tenant),
+    actor: User = Depends(resolve_authenticated_leadership),
+    db: AsyncSession = Depends(get_db),
+):
+    await set_tenant_context(db, tenant.id)
+    if body.relationship_type not in SUPPORTED_RELATIONSHIP_TYPES:
+        raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail="Invalid relationship_type.")
+
+    parent = await db.scalar(
+        select(User).where(
+            User.id == body.parent_id,
+            User.tenant_id == tenant.id,
+            User.role == "parent",
+        )
+    )
+    if parent is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Parent not found.")
+    if hasattr(parent, "is_active") and not bool(parent.is_active):
+        raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail="Parent account is inactive.")
+
+    student = await db.scalar(
+        select(Student).where(
+            Student.id == body.student_id,
+            Student.tenant_id == tenant.id,
+        )
+    )
+    if student is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Student not found.")
+
+    duplicate = await db.scalar(
+        select(StudentParent.student_id).where(
+            StudentParent.student_id == body.student_id,
+            StudentParent.parent_id == body.parent_id,
+            _active_relationship_clause(),
+        )
+    )
+    if duplicate is not None:
+        raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="Duplicate active relationship.")
+
+    rel = StudentParent(
+        student_id=body.student_id,
+        parent_id=body.parent_id,
+        relation_type=body.relationship_type,
+        is_primary=body.is_primary,
+        is_active=True,
+    )
+    db.add(rel)
+
+    await log_action(
+        db=db,
+        tenant_id=tenant.id,
+        action="family_relationship.created",
+        entity_type="StudentParent",
+        entity_id=body.student_id,
+        actor_id=actor.id,
+        details={
+            "student_id": str(body.student_id),
+            "parent_id": str(body.parent_id),
+            "relationship_type": body.relationship_type,
+            "is_primary": body.is_primary,
+        },
+    )
+
+    await db.commit()
+    return {
+        "relationship_id": f"{str(body.student_id)}:{str(body.parent_id)}",
+        "student_id": str(body.student_id),
+        "parent_id": str(body.parent_id),
+        "relationship_type": rel.relation_type,
+        "is_primary": bool(rel.is_primary),
+        "is_active": True if rel.is_active is None else bool(rel.is_active),
+    }
+
+
+@leadership_router.patch("/relationships/{relationship_id}", summary="Update family relationship lifecycle")
+async def update_relationship(
+    relationship_id: str,
+    body: RelationshipUpdateRequest,
+    tenant: Tenant = Depends(resolve_tenant),
+    actor: User = Depends(resolve_authenticated_leadership),
+    db: AsyncSession = Depends(get_db),
+):
+    await set_tenant_context(db, tenant.id)
+    try:
+        student_part, parent_part = relationship_id.split(":", 1)
+        student_uuid = uuid.UUID(student_part)
+        parent_uuid = uuid.UUID(parent_part)
+    except Exception as exc:  # pragma: no cover - defensive parse guard
+        raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail="Invalid relationship_id format.") from exc
+
+    rel = await db.scalar(
+        select(StudentParent)
+        .join(Student, Student.id == StudentParent.student_id)
+        .join(User, User.id == StudentParent.parent_id)
+        .where(
+            StudentParent.student_id == student_uuid,
+            StudentParent.parent_id == parent_uuid,
+            Student.tenant_id == tenant.id,
+            User.tenant_id == tenant.id,
+        )
+    )
+    if rel is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Relationship not found.")
+
+    if body.relationship_type is not None:
+        if body.relationship_type not in SUPPORTED_RELATIONSHIP_TYPES:
+            raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail="Invalid relationship_type.")
+        rel.relation_type = body.relationship_type
+
+    if body.is_primary is not None:
+        rel.is_primary = body.is_primary
+
+    if body.is_active is not None:
+        rel.is_active = body.is_active
+
+    await log_action(
+        db=db,
+        tenant_id=tenant.id,
+        action="family_relationship.updated" if body.is_active is not False else "family_relationship.deactivated",
+        entity_type="StudentParent",
+        entity_id=student_uuid,
+        actor_id=actor.id,
+        details={
+            "student_id": str(student_uuid),
+            "parent_id": str(parent_uuid),
+            "relationship_type": rel.relation_type,
+            "is_primary": bool(rel.is_primary),
+            "is_active": True if rel.is_active is None else bool(rel.is_active),
+        },
+    )
+
+    await db.commit()
+    return {
+        "relationship_id": relationship_id,
+        "student_id": str(student_uuid),
+        "parent_id": str(parent_uuid),
+        "relationship_type": rel.relation_type,
+        "is_primary": bool(rel.is_primary),
+        "is_active": True if rel.is_active is None else bool(rel.is_active),
+    }
+
+
+@leadership_router.get("/summary", summary="Family relationship diagnostics")
+async def relationships_summary(
+    tenant: Tenant = Depends(resolve_tenant),
+    actor: User = Depends(resolve_authenticated_leadership),
+    db: AsyncSession = Depends(get_db),
+):
+    await set_tenant_context(db, tenant.id)
+
+    total_active_relationships = await db.scalar(
+        select(func.count())
+        .select_from(StudentParent)
+        .join(Student, Student.id == StudentParent.student_id)
+        .join(User, User.id == StudentParent.parent_id)
+        .where(Student.tenant_id == tenant.id, User.tenant_id == tenant.id, _active_relationship_clause())
+    ) or 0
+
+    active_by_student = (
+        await db.execute(
+            select(StudentParent.student_id, func.count())
+            .join(Student, Student.id == StudentParent.student_id)
+            .join(User, User.id == StudentParent.parent_id)
+            .where(Student.tenant_id == tenant.id, User.tenant_id == tenant.id, _active_relationship_clause())
+            .group_by(StudentParent.student_id)
+        )
+    ).all()
+    active_count_map = {sid: count for sid, count in active_by_student}
+
+    tenant_students = (
+        await db.execute(select(Student.id).where(Student.tenant_id == tenant.id))
+    ).scalars().all()
+    students_with_no_active_parent_guardian_relationship = sum(1 for sid in tenant_students if active_count_map.get(sid, 0) == 0)
+    students_with_multiple_active_relationships = sum(1 for sid in tenant_students if active_count_map.get(sid, 0) > 1)
+
+    primary_relationships = await db.scalar(
+        select(func.count())
+        .select_from(StudentParent)
+        .join(Student, Student.id == StudentParent.student_id)
+        .join(User, User.id == StudentParent.parent_id)
+        .where(Student.tenant_id == tenant.id, User.tenant_id == tenant.id, _active_relationship_clause(), StudentParent.is_primary.is_(True))
+    ) or 0
+
+    inactive_historical_relationships = await db.scalar(
+        select(func.count())
+        .select_from(StudentParent)
+        .join(Student, Student.id == StudentParent.student_id)
+        .join(User, User.id == StudentParent.parent_id)
+        .where(Student.tenant_id == tenant.id, User.tenant_id == tenant.id, StudentParent.is_active.is_(False))
+    ) or 0
+
+    cross_tenant_inconsistencies = await db.scalar(
+        select(func.count())
+        .select_from(StudentParent)
+        .join(Student, Student.id == StudentParent.student_id)
+        .join(User, User.id == StudentParent.parent_id)
+        .where(Student.tenant_id != User.tenant_id)
+    ) or 0
+
+    return {
+        "total_active_relationships": total_active_relationships,
+        "students_with_no_active_parent_guardian_relationship": students_with_no_active_parent_guardian_relationship,
+        "students_with_multiple_active_relationships": students_with_multiple_active_relationships,
+        "primary_relationships": primary_relationships,
+        "inactive_historical_relationships": inactive_historical_relationships,
+        "cross_tenant_inconsistencies": cross_tenant_inconsistencies,
     }

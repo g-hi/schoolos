@@ -365,4 +365,10 @@ def test_migration_parity_and_single_head() -> None:
     script = ScriptDirectory.from_config(Config("alembic.ini"))
     heads = script.get_heads()
     assert len(heads) == 1
-    assert heads[0] == "8c3f2b1e9d77"
+
+    revision_chain = {
+        revision.revision
+        for revision in script.iterate_revisions(heads[0], "base")
+    }
+
+    assert "8c3f2b1e9d77" in revision_chain

@@ -175,11 +175,17 @@ async def test_deactivate_last_active_principal_is_blocked() -> None:
     assert exc_info.value.status_code == 409
 
 
-def test_phase_9c_is_current_migration_head() -> None:
+def test_phase_9c_revision_remains_in_active_chain() -> None:
     from alembic.config import Config
     from alembic.script import ScriptDirectory
 
     script = ScriptDirectory.from_config(Config("alembic.ini"))
     heads = script.get_heads()
     assert len(heads) == 1
-    assert heads[0] == "1a9d5e7c3b21"
+
+    revision_chain = {
+        revision.revision
+        for revision in script.iterate_revisions(heads[0], "base")
+    }
+
+    assert "1a9d5e7c3b21" in revision_chain

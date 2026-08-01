@@ -38,7 +38,7 @@ Design decisions
 import csv
 import io
 import uuid
-from typing import Any
+from typing import Any, Literal
 
 from fastapi import APIRouter, Depends, HTTPException, UploadFile, File
 from sqlalchemy import select
@@ -86,9 +86,582 @@ def _missing(row: dict, *fields: str) -> str | None:
 
 IngestResult = dict[str, Any]
 
+ImportKind = Literal["subjects", "classes", "teachers", "students", "parents"]
+
+
+def _row_outcome(
+    row: int,
+    status: str,
+    *,
+    error: str | None = None,
+    warnings: list[str] | None = None,
+    data: dict[str, Any] | None = None,
+    raw: dict[str, str] | None = None,
+) -> dict[str, Any]:
+    return {
+        "row": row,
+        "status": status,
+        "error": error,
+        "warnings": warnings or [],
+        "data": data or {},
+        "raw": raw or {},
+    }
+
 
 def _result(inserted: int, skipped: int, errors: list[dict]) -> IngestResult:
     return {"inserted": inserted, "skipped": skipped, "errors": errors}
+
+
+def _summary_result(
+    *,
+    inserted: int,
+    skipped: int,
+    errors: list[dict],
+    row_results: list[dict[str, Any]],
+) -> dict[str, Any]:
+    return {
+        "inserted": inserted,
+        "skipped": skipped,
+        "errors": errors,
+        "row_results": row_results,
+    }
+
+
+async def _ingest_subject_rows(
+    *,
+    rows: list[dict[str, str]],
+    tenant: Tenant,
+    db: AsyncSession,
+    commit: bool,
+) -> dict[str, Any]:
+    inserted, skipped, errors = 0, 0, []
+    row_results: list[dict[str, Any]] = []
+    seen_codes: set[str] = set()
+
+    for i, row in enumerate(rows, start=2):
+        err = _missing(row, "code", "name")
+        if err:
+            errors.append({"row": i, "error": err})
+            row_results.append(_row_outcome(i, "error", error=err, raw=row))
+            skipped += 1
+            continue
+
+        code = row["code"].upper()
+        if code in seen_codes:
+            err = f"duplicate code in file: {code}"
+            errors.append({"row": i, "error": err})
+            row_results.append(_row_outcome(i, "error", error=err, raw=row))
+            skipped += 1
+            continue
+        seen_codes.add(code)
+
+        exists = await db.scalar(
+            select(Subject.id).where(
+                Subject.tenant_id == tenant.id,
+                Subject.code == code,
+            )
+        )
+        if exists:
+            err = f"duplicate code: {code}"
+            errors.append({"row": i, "error": err})
+            row_results.append(_row_outcome(i, "error", error=err, raw=row))
+            skipped += 1
+            continue
+
+        if commit:
+            db.add(Subject(
+                id=uuid.uuid4(),
+                tenant_id=tenant.id,
+                code=code,
+                name=row["name"],
+            ))
+
+        inserted += 1
+        row_results.append(_row_outcome(i, "inserted", data={"code": code, "name": row["name"]}, raw=row))
+
+    return _summary_result(inserted=inserted, skipped=skipped, errors=errors, row_results=row_results)
+
+
+async def _ingest_class_rows(
+    *,
+    rows: list[dict[str, str]],
+    tenant: Tenant,
+    db: AsyncSession,
+    commit: bool,
+) -> dict[str, Any]:
+    inserted, skipped, errors = 0, 0, []
+    row_results: list[dict[str, Any]] = []
+    seen_keys: set[tuple[str, str, str]] = set()
+
+    for i, row in enumerate(rows, start=2):
+        err = _missing(row, "grade", "section", "academic_year")
+        if err:
+            errors.append({"row": i, "error": err})
+            row_results.append(_row_outcome(i, "error", error=err, raw=row))
+            skipped += 1
+            continue
+
+        identity = (row["grade"], row["section"], row["academic_year"])
+        if identity in seen_keys:
+            err = f"duplicate class in file: {row['grade']} {row['section']} ({row['academic_year']})"
+            errors.append({"row": i, "error": err})
+            row_results.append(_row_outcome(i, "error", error=err, raw=row))
+            skipped += 1
+            continue
+        seen_keys.add(identity)
+
+        exists = await db.scalar(
+            select(Class.id).where(
+                Class.tenant_id == tenant.id,
+                Class.grade == row["grade"],
+                Class.section == row["section"],
+                Class.academic_year == row["academic_year"],
+            )
+        )
+        if exists:
+            err = f"duplicate class: {row['grade']} {row['section']} ({row['academic_year']})"
+            errors.append({"row": i, "error": err})
+            row_results.append(_row_outcome(i, "error", error=err, raw=row))
+            skipped += 1
+            continue
+
+        if commit:
+            db.add(Class(
+                id=uuid.uuid4(),
+                tenant_id=tenant.id,
+                grade=row["grade"],
+                section=row["section"],
+                academic_year=row["academic_year"],
+            ))
+
+        inserted += 1
+        row_results.append(
+            _row_outcome(
+                i,
+                "inserted",
+                data={"grade": row["grade"], "section": row["section"], "academic_year": row["academic_year"]},
+                raw=row,
+            )
+        )
+
+    return _summary_result(inserted=inserted, skipped=skipped, errors=errors, row_results=row_results)
+
+
+async def _ingest_teacher_rows(
+    *,
+    rows: list[dict[str, str]],
+    tenant: Tenant,
+    db: AsyncSession,
+    commit: bool,
+) -> dict[str, Any]:
+    inserted, skipped, errors = 0, 0, []
+    row_results: list[dict[str, Any]] = []
+    seen_emails: set[str] = set()
+
+    for i, row in enumerate(rows, start=2):
+        err = _missing(row, "email", "name")
+        if err:
+            errors.append({"row": i, "error": err})
+            row_results.append(_row_outcome(i, "error", error=err, raw=row))
+            skipped += 1
+            continue
+
+        email = row["email"].lower()
+        if email in seen_emails:
+            err = f"duplicate email in file: {email}"
+            errors.append({"row": i, "error": err})
+            row_results.append(_row_outcome(i, "error", error=err, raw=row))
+            skipped += 1
+            continue
+        seen_emails.add(email)
+
+        exists = await db.scalar(
+            select(User.id).where(
+                User.tenant_id == tenant.id,
+                User.email == email,
+            )
+        )
+        if exists:
+            err = f"duplicate email: {email}"
+            errors.append({"row": i, "error": err})
+            row_results.append(_row_outcome(i, "error", error=err, raw=row))
+            skipped += 1
+            continue
+
+        try:
+            max_hours = int(row.get("max_weekly_hours") or 20)
+        except ValueError:
+            max_hours = 20
+
+        warnings: list[str] = []
+        linked_subject_codes: list[str] = []
+        raw_codes = row.get("subject_codes", "")
+        if raw_codes:
+            for code in [code.strip().upper() for code in raw_codes.split(",") if code.strip()]:
+                subject_id = await db.scalar(
+                    select(Subject.id).where(
+                        Subject.tenant_id == tenant.id,
+                        Subject.code == code,
+                    )
+                )
+                if subject_id:
+                    linked_subject_codes.append(code)
+                else:
+                    warnings.append(f"subject code not found: {code}")
+
+        if commit:
+            user = User(
+                id=uuid.uuid4(),
+                tenant_id=tenant.id,
+                name=row["name"],
+                email=email,
+                phone=row.get("phone") or None,
+                role="teacher",
+                preferred_channel="whatsapp",
+            )
+            db.add(user)
+            await db.flush()
+
+            teacher = Teacher(
+                id=uuid.uuid4(),
+                tenant_id=tenant.id,
+                user_id=user.id,
+                employee_id=row.get("employee_id") or None,
+                max_weekly_hours=max_hours,
+            )
+            db.add(teacher)
+            await db.flush()
+
+            if raw_codes:
+                for code in linked_subject_codes:
+                    subject_id = await db.scalar(
+                        select(Subject.id).where(
+                            Subject.tenant_id == tenant.id,
+                            Subject.code == code,
+                        )
+                    )
+                    if subject_id:
+                        db.add(TeacherSubject(teacher_id=teacher.id, subject_id=subject_id))
+
+        inserted += 1
+        row_results.append(
+            _row_outcome(
+                i,
+                "inserted",
+                warnings=warnings,
+                data={
+                    "email": email,
+                    "name": row["name"],
+                    "employee_id": row.get("employee_id") or None,
+                    "max_weekly_hours": max_hours,
+                    "subject_codes": linked_subject_codes,
+                },
+                raw=row,
+            )
+        )
+
+    return _summary_result(inserted=inserted, skipped=skipped, errors=errors, row_results=row_results)
+
+
+async def _ingest_student_rows(
+    *,
+    rows: list[dict[str, str]],
+    tenant: Tenant,
+    db: AsyncSession,
+    commit: bool,
+) -> dict[str, Any]:
+    inserted, skipped, errors = 0, 0, []
+    row_results: list[dict[str, Any]] = []
+    seen_codes: set[str] = set()
+
+    for i, row in enumerate(rows, start=2):
+        err = _missing(row, "name", "grade", "section", "academic_year")
+        if err:
+            errors.append({"row": i, "error": err})
+            row_results.append(_row_outcome(i, "error", error=err, raw=row))
+            skipped += 1
+            continue
+
+        klass = await db.scalar(
+            select(Class).where(
+                Class.tenant_id == tenant.id,
+                Class.grade == row["grade"],
+                Class.section == row["section"],
+                Class.academic_year == row["academic_year"],
+            )
+        )
+        if not klass:
+            err = f"class not found: {row['grade']} / {row['section']} ({row['academic_year']})"
+            errors.append({"row": i, "error": err})
+            row_results.append(_row_outcome(i, "error", error=err, raw=row))
+            skipped += 1
+            continue
+
+        is_canonical = (
+            klass.campus_id is not None
+            and klass.academic_year_id is not None
+            and klass.grade_level_id is not None
+            and klass.is_active
+        )
+
+        student_code = row.get("student_code") or None
+        if student_code:
+            if student_code in seen_codes:
+                err = f"duplicate student_code in file: {student_code}"
+                errors.append({"row": i, "error": err})
+                row_results.append(_row_outcome(i, "error", error=err, raw=row))
+                skipped += 1
+                continue
+            seen_codes.add(student_code)
+
+        existing_student: Student | None = None
+        if student_code:
+            existing_student = await db.scalar(
+                select(Student).where(
+                    Student.tenant_id == tenant.id,
+                    Student.student_code == student_code,
+                )
+            )
+
+        if existing_student is not None:
+            if not is_canonical:
+                err = f"duplicate student_code: {student_code}"
+                errors.append({"row": i, "error": err})
+                row_results.append(_row_outcome(i, "error", error=err, raw=row))
+                skipped += 1
+                continue
+
+            academic_year = await db.scalar(
+                select(AcademicYear).where(
+                    AcademicYear.id == klass.academic_year_id,
+                    AcademicYear.tenant_id == tenant.id,
+                    AcademicYear.is_active.is_(True),
+                )
+            )
+            if academic_year is None:
+                err = "canonical class academic year not found or inactive"
+                errors.append({"row": i, "error": err})
+                row_results.append(_row_outcome(i, "error", error=err, raw=row))
+                skipped += 1
+                continue
+
+            same_class_active = await db.scalar(
+                select(StudentEnrollment.id).where(
+                    StudentEnrollment.tenant_id == tenant.id,
+                    StudentEnrollment.student_id == existing_student.id,
+                    StudentEnrollment.class_id == klass.id,
+                    StudentEnrollment.academic_year_id == klass.academic_year_id,
+                    StudentEnrollment.status == "active",
+                )
+            )
+            if same_class_active is not None:
+                skipped += 1
+                row_results.append(_row_outcome(i, "skipped", data={"reason": "already enrolled in class"}, raw=row))
+                continue
+
+            conflict_enrollment = await db.scalar(
+                select(StudentEnrollment.id).where(
+                    StudentEnrollment.tenant_id == tenant.id,
+                    StudentEnrollment.student_id == existing_student.id,
+                    StudentEnrollment.academic_year_id == klass.academic_year_id,
+                    StudentEnrollment.status == "active",
+                )
+            )
+            if conflict_enrollment is not None:
+                err = (
+                    f"student '{student_code}' already has an active enrollment in a different class for this academic year. "
+                    "Use the transfer endpoint to move them."
+                )
+                errors.append({"row": i, "error": err})
+                row_results.append(_row_outcome(i, "error", error=err, raw=row))
+                skipped += 1
+                continue
+
+            if commit:
+                existing_student.class_id = klass.id
+                enrollment = StudentEnrollment(
+                    id=uuid.uuid4(),
+                    tenant_id=tenant.id,
+                    academic_year_id=klass.academic_year_id,
+                    student_id=existing_student.id,
+                    class_id=klass.id,
+                    grade_level_id=klass.grade_level_id,
+                    status="active",
+                    enrolled_on=academic_year.start_date,
+                    exited_on=None,
+                    exit_reason=None,
+                )
+                db.add(enrollment)
+
+            inserted += 1
+            row_results.append(_row_outcome(i, "inserted", data={"student_code": student_code}, raw=row))
+            continue
+
+        academic_year = None
+        if is_canonical:
+            academic_year = await db.scalar(
+                select(AcademicYear).where(
+                    AcademicYear.id == klass.academic_year_id,
+                    AcademicYear.tenant_id == tenant.id,
+                    AcademicYear.is_active.is_(True),
+                )
+            )
+            if academic_year is None:
+                err = "canonical class academic year not found or inactive"
+                errors.append({"row": i, "error": err})
+                row_results.append(_row_outcome(i, "error", error=err, raw=row))
+                skipped += 1
+                continue
+
+        if commit:
+            student = Student(
+                id=uuid.uuid4(),
+                tenant_id=tenant.id,
+                class_id=klass.id,
+                name=row["name"],
+                student_code=student_code,
+            )
+            db.add(student)
+            await db.flush()
+
+            if is_canonical and academic_year is not None:
+                enrollment = StudentEnrollment(
+                    id=uuid.uuid4(),
+                    tenant_id=tenant.id,
+                    academic_year_id=klass.academic_year_id,
+                    student_id=student.id,
+                    class_id=klass.id,
+                    grade_level_id=klass.grade_level_id,
+                    status="active",
+                    enrolled_on=academic_year.start_date,
+                    exited_on=None,
+                    exit_reason=None,
+                )
+                db.add(enrollment)
+
+        inserted += 1
+        row_results.append(
+            _row_outcome(
+                i,
+                "inserted",
+                data={"student_code": student_code, "name": row["name"], "class_id": str(klass.id)},
+                raw=row,
+            )
+        )
+
+    return _summary_result(inserted=inserted, skipped=skipped, errors=errors, row_results=row_results)
+
+
+async def _ingest_parent_rows(
+    *,
+    rows: list[dict[str, str]],
+    tenant: Tenant,
+    db: AsyncSession,
+    commit: bool,
+) -> dict[str, Any]:
+    inserted, skipped, errors = 0, 0, []
+    row_results: list[dict[str, Any]] = []
+    seen_links: set[tuple[str, str]] = set()
+    preview_parent_ids: dict[str, uuid.UUID] = {}
+
+    for i, row in enumerate(rows, start=2):
+        err = _missing(row, "name", "email", "phone", "student_code")
+        if err:
+            errors.append({"row": i, "error": err})
+            row_results.append(_row_outcome(i, "error", error=err, raw=row))
+            skipped += 1
+            continue
+
+        email = row["email"].lower()
+
+        student_id = await db.scalar(
+            select(Student.id).where(
+                Student.tenant_id == tenant.id,
+                Student.student_code == row["student_code"],
+            )
+        )
+        if not student_id:
+            err = f"student not found: {row['student_code']}"
+            errors.append({"row": i, "error": err})
+            row_results.append(_row_outcome(i, "error", error=err, raw=row))
+            skipped += 1
+            continue
+
+        parent_id = await db.scalar(
+            select(User.id).where(
+                User.tenant_id == tenant.id,
+                User.email == email,
+            )
+        )
+        if not parent_id:
+            if commit:
+                channel = row.get("preferred_channel", "whatsapp")
+                if channel not in ("whatsapp", "sms", "email"):
+                    channel = "whatsapp"
+
+                parent = User(
+                    id=uuid.uuid4(),
+                    tenant_id=tenant.id,
+                    name=row["name"],
+                    email=email,
+                    phone=row.get("phone") or None,
+                    role="parent",
+                    preferred_channel=channel,
+                )
+                db.add(parent)
+                await db.flush()
+                parent_id = parent.id
+            else:
+                parent_id = preview_parent_ids.setdefault(email, uuid.uuid4())
+
+        link_key = (email, str(student_id))
+        if link_key in seen_links:
+            err = f"parent {email} already linked to student {row['student_code']}"
+            errors.append({"row": i, "error": err})
+            row_results.append(_row_outcome(i, "error", error=err, raw=row))
+            skipped += 1
+            continue
+        seen_links.add(link_key)
+
+        link_exists = await db.scalar(
+            select(StudentParent.student_id).where(
+                StudentParent.student_id == student_id,
+                StudentParent.parent_id == parent_id,
+            )
+        )
+        if link_exists:
+            err = f"parent {email} already linked to student {row['student_code']}"
+            errors.append({"row": i, "error": err})
+            row_results.append(_row_outcome(i, "error", error=err, raw=row))
+            skipped += 1
+            continue
+
+        if commit:
+            relation = row.get("relation_type") or "parent"
+            db.add(StudentParent(
+                student_id=student_id,
+                parent_id=parent_id,
+                relation_type=relation,
+            ))
+
+        inserted += 1
+        row_results.append(_row_outcome(i, "inserted", data={"email": email, "student_code": row["student_code"]}, raw=row))
+
+    return _summary_result(inserted=inserted, skipped=skipped, errors=errors, row_results=row_results)
+
+
+async def run_ingest(kind: ImportKind, rows: list[dict[str, str]], tenant: Tenant, db: AsyncSession, *, commit: bool) -> dict[str, Any]:
+    if kind == "subjects":
+        return await _ingest_subject_rows(rows=rows, tenant=tenant, db=db, commit=commit)
+    if kind == "classes":
+        return await _ingest_class_rows(rows=rows, tenant=tenant, db=db, commit=commit)
+    if kind == "teachers":
+        return await _ingest_teacher_rows(rows=rows, tenant=tenant, db=db, commit=commit)
+    if kind == "students":
+        return await _ingest_student_rows(rows=rows, tenant=tenant, db=db, commit=commit)
+    if kind == "parents":
+        return await _ingest_parent_rows(rows=rows, tenant=tenant, db=db, commit=commit)
+    raise HTTPException(status_code=404, detail=f"Unsupported import kind: {kind}")
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -110,40 +683,9 @@ async def ingest_subjects(
     """
     await set_tenant_context(db, tenant.id)
     rows = _parse_csv(await file.read())
-
-    inserted, skipped, errors = 0, 0, []
-
-    for i, row in enumerate(rows, start=2):  # start=2: row 1 is the header
-        err = _missing(row, "code", "name")
-        if err:
-            errors.append({"row": i, "error": err})
-            skipped += 1
-            continue
-
-        code = row["code"].upper()
-
-        # Duplicate check
-        exists = await db.scalar(
-            select(Subject.id).where(
-                Subject.tenant_id == tenant.id,
-                Subject.code == code,
-            )
-        )
-        if exists:
-            errors.append({"row": i, "error": f"duplicate code: {code}"})
-            skipped += 1
-            continue
-
-        db.add(Subject(
-            id=uuid.uuid4(),
-            tenant_id=tenant.id,
-            code=code,
-            name=row["name"],
-        ))
-        inserted += 1
-
+    result = await run_ingest("subjects", rows, tenant, db, commit=True)
     await db.commit()
-    return _result(inserted, skipped, errors)
+    return _result(result["inserted"], result["skipped"], result["errors"])
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -165,41 +707,9 @@ async def ingest_classes(
     """
     await set_tenant_context(db, tenant.id)
     rows = _parse_csv(await file.read())
-
-    inserted, skipped, errors = 0, 0, []
-
-    for i, row in enumerate(rows, start=2):
-        err = _missing(row, "grade", "section", "academic_year")
-        if err:
-            errors.append({"row": i, "error": err})
-            skipped += 1
-            continue
-
-        # Duplicate check
-        exists = await db.scalar(
-            select(Class.id).where(
-                Class.tenant_id == tenant.id,
-                Class.grade == row["grade"],
-                Class.section == row["section"],
-                Class.academic_year == row["academic_year"],
-            )
-        )
-        if exists:
-            errors.append({"row": i, "error": f"duplicate class: {row['grade']} {row['section']} ({row['academic_year']})"})
-            skipped += 1
-            continue
-
-        db.add(Class(
-            id=uuid.uuid4(),
-            tenant_id=tenant.id,
-            grade=row["grade"],
-            section=row["section"],
-            academic_year=row["academic_year"],
-        ))
-        inserted += 1
-
+    result = await run_ingest("classes", rows, tenant, db, commit=True)
     await db.commit()
-    return _result(inserted, skipped, errors)
+    return _result(result["inserted"], result["skipped"], result["errors"])
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -224,79 +734,9 @@ async def ingest_teachers(
     """
     await set_tenant_context(db, tenant.id)
     rows = _parse_csv(await file.read())
-
-    inserted, skipped, errors = 0, 0, []
-
-    for i, row in enumerate(rows, start=2):
-        err = _missing(row, "email", "name")
-        if err:
-            errors.append({"row": i, "error": err})
-            skipped += 1
-            continue
-
-        email = row["email"].lower()
-
-        # Duplicate check — email must be unique per tenant
-        exists = await db.scalar(
-            select(User.id).where(
-                User.tenant_id == tenant.id,
-                User.email == email,
-            )
-        )
-        if exists:
-            errors.append({"row": i, "error": f"duplicate email: {email}"})
-            skipped += 1
-            continue
-
-        # Parse max_weekly_hours (optional, default 20)
-        try:
-            max_hours = int(row.get("max_weekly_hours") or 20)
-        except ValueError:
-            max_hours = 20
-
-        # Create User row
-        user = User(
-            id=uuid.uuid4(),
-            tenant_id=tenant.id,
-            name=row["name"],
-            email=email,
-            phone=row.get("phone") or None,
-            role="teacher",
-            preferred_channel="whatsapp",
-        )
-        db.add(user)
-        await db.flush()  # flush so user.id is available for Teacher FK
-
-        # Create Teacher row
-        teacher = Teacher(
-            id=uuid.uuid4(),
-            tenant_id=tenant.id,
-            user_id=user.id,
-            employee_id=row.get("employee_id") or None,
-            max_weekly_hours=max_hours,
-        )
-        db.add(teacher)
-        await db.flush()  # flush so teacher.id is available for TeacherSubject FK
-
-        # Link subjects
-        raw_codes = row.get("subject_codes", "")
-        if raw_codes:
-            for code in [c.strip().upper() for c in raw_codes.split(",") if c.strip()]:
-                subject_id = await db.scalar(
-                    select(Subject.id).where(
-                        Subject.tenant_id == tenant.id,
-                        Subject.code == code,
-                    )
-                )
-                if subject_id:
-                    db.add(TeacherSubject(teacher_id=teacher.id, subject_id=subject_id))
-                else:
-                    errors.append({"row": i, "error": f"subject code not found: {code} (teacher still inserted)"})
-
-        inserted += 1
-
+    result = await run_ingest("teachers", rows, tenant, db, commit=True)
     await db.commit()
-    return _result(inserted, skipped, errors)
+    return _result(result["inserted"], result["skipped"], result["errors"])
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -333,163 +773,9 @@ async def ingest_students(
     """
     await set_tenant_context(db, tenant.id)
     rows = _parse_csv(await file.read())
-
-    inserted, skipped, errors = 0, 0, []
-
-    for i, row in enumerate(rows, start=2):
-        err = _missing(row, "name", "grade", "section", "academic_year")
-        if err:
-            errors.append({"row": i, "error": err})
-            skipped += 1
-            continue
-
-        # Resolve class
-        klass = await db.scalar(
-            select(Class).where(
-                Class.tenant_id == tenant.id,
-                Class.grade == row["grade"],
-                Class.section == row["section"],
-                Class.academic_year == row["academic_year"],
-            )
-        )
-        if not klass:
-            errors.append({"row": i, "error": f"class not found: {row['grade']} / {row['section']} ({row['academic_year']})"})
-            skipped += 1
-            continue
-
-        is_canonical = (
-            klass.campus_id is not None
-            and klass.academic_year_id is not None
-            and klass.grade_level_id is not None
-            and klass.is_active
-        )
-
-        student_code = row.get("student_code") or None
-
-        # Duplicate check by student_code if provided
-        existing_student: Student | None = None
-        if student_code:
-            existing_student = await db.scalar(
-                select(Student).where(
-                    Student.tenant_id == tenant.id,
-                    Student.student_code == student_code,
-                )
-            )
-
-        if existing_student is not None:
-            # Student already exists; only handle canonical enrollment idempotency
-            if not is_canonical:
-                errors.append({"row": i, "error": f"duplicate student_code: {student_code}"})
-                skipped += 1
-                continue
-
-            # Canonical: check if already enrolled in this exact class/year
-            academic_year = await db.scalar(
-                select(AcademicYear).where(
-                    AcademicYear.id == klass.academic_year_id,
-                    AcademicYear.tenant_id == tenant.id,
-                    AcademicYear.is_active.is_(True),
-                )
-            )
-            if academic_year is None:
-                errors.append({"row": i, "error": "canonical class academic year not found or inactive"})
-                skipped += 1
-                continue
-
-            same_class_active = await db.scalar(
-                select(StudentEnrollment.id).where(
-                    StudentEnrollment.tenant_id == tenant.id,
-                    StudentEnrollment.student_id == existing_student.id,
-                    StudentEnrollment.class_id == klass.id,
-                    StudentEnrollment.academic_year_id == klass.academic_year_id,
-                    StudentEnrollment.status == "active",
-                )
-            )
-            if same_class_active is not None:
-                # Idempotent — already enrolled in this class
-                skipped += 1
-                continue
-
-            # Check for a conflicting active enrollment in the same year
-            conflict_enrollment = await db.scalar(
-                select(StudentEnrollment.id).where(
-                    StudentEnrollment.tenant_id == tenant.id,
-                    StudentEnrollment.student_id == existing_student.id,
-                    StudentEnrollment.academic_year_id == klass.academic_year_id,
-                    StudentEnrollment.status == "active",
-                )
-            )
-            if conflict_enrollment is not None:
-                errors.append({
-                    "row": i,
-                    "error": (
-                        f"student '{student_code}' already has an active enrollment in a different "
-                        "class for this academic year. Use the transfer endpoint to move them."
-                    ),
-                })
-                skipped += 1
-                continue
-
-            # Create enrollment for existing student into canonical class
-            existing_student.class_id = klass.id
-            enrollment = StudentEnrollment(
-                id=uuid.uuid4(),
-                tenant_id=tenant.id,
-                academic_year_id=klass.academic_year_id,
-                student_id=existing_student.id,
-                class_id=klass.id,
-                grade_level_id=klass.grade_level_id,
-                status="active",
-                enrolled_on=academic_year.start_date,
-                exited_on=None,
-                exit_reason=None,
-            )
-            db.add(enrollment)
-            inserted += 1
-            continue
-
-        # New student
-        student = Student(
-            id=uuid.uuid4(),
-            tenant_id=tenant.id,
-            class_id=klass.id,
-            name=row["name"],
-            student_code=student_code,
-        )
-        db.add(student)
-        await db.flush()  # ensure student.id is available for enrollment FK
-
-        if is_canonical:
-            academic_year = await db.scalar(
-                select(AcademicYear).where(
-                    AcademicYear.id == klass.academic_year_id,
-                    AcademicYear.tenant_id == tenant.id,
-                    AcademicYear.is_active.is_(True),
-                )
-            )
-            if academic_year is None:
-                errors.append({"row": i, "error": "canonical class academic year not found or inactive"})
-                skipped += 1
-                continue
-
-            enrollment = StudentEnrollment(
-                id=uuid.uuid4(),
-                tenant_id=tenant.id,
-                academic_year_id=klass.academic_year_id,
-                student_id=student.id,
-                class_id=klass.id,
-                grade_level_id=klass.grade_level_id,
-                status="active",
-                enrolled_on=academic_year.start_date,
-                exited_on=None,
-                exit_reason=None,
-            )
-            db.add(enrollment)
-
-        inserted += 1
-
+    result = await run_ingest("students", rows, tenant, db, commit=True)
     await db.commit()
-    return _result(inserted, skipped, errors)
+    return _result(result["inserted"], result["skipped"], result["errors"])
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -517,74 +803,6 @@ async def ingest_parents(
     """
     await set_tenant_context(db, tenant.id)
     rows = _parse_csv(await file.read())
-
-    inserted, skipped, errors = 0, 0, []
-
-    for i, row in enumerate(rows, start=2):
-        err = _missing(row, "name", "email", "phone", "student_code")
-        if err:
-            errors.append({"row": i, "error": err})
-            skipped += 1
-            continue
-
-        email = row["email"].lower()
-
-        # Resolve student
-        student_id = await db.scalar(
-            select(Student.id).where(
-                Student.tenant_id == tenant.id,
-                Student.student_code == row["student_code"],
-            )
-        )
-        if not student_id:
-            errors.append({"row": i, "error": f"student not found: {row['student_code']}"})
-            skipped += 1
-            continue
-
-        # Upsert parent User — reuse if email already exists
-        parent_id = await db.scalar(
-            select(User.id).where(
-                User.tenant_id == tenant.id,
-                User.email == email,
-            )
-        )
-        if not parent_id:
-            channel = row.get("preferred_channel", "whatsapp")
-            if channel not in ("whatsapp", "sms", "email"):
-                channel = "whatsapp"
-
-            parent = User(
-                id=uuid.uuid4(),
-                tenant_id=tenant.id,
-                name=row["name"],
-                email=email,
-                phone=row.get("phone") or None,
-                role="parent",
-                preferred_channel=channel,
-            )
-            db.add(parent)
-            await db.flush()
-            parent_id = parent.id
-
-        # Avoid duplicate StudentParent link
-        link_exists = await db.scalar(
-            select(StudentParent.student_id).where(
-                StudentParent.student_id == student_id,
-                StudentParent.parent_id == parent_id,
-            )
-        )
-        if link_exists:
-            errors.append({"row": i, "error": f"parent {email} already linked to student {row['student_code']}"})
-            skipped += 1
-            continue
-
-        relation = row.get("relation_type") or "parent"
-        db.add(StudentParent(
-            student_id=student_id,
-            parent_id=parent_id,
-            relation_type=relation,
-        ))
-        inserted += 1
-
+    result = await run_ingest("parents", rows, tenant, db, commit=True)
     await db.commit()
-    return _result(inserted, skipped, errors)
+    return _result(result["inserted"], result["skipped"], result["errors"])

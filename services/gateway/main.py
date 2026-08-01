@@ -53,6 +53,7 @@ from services.gateway.routers.academic_structure import router as academic_struc
 from services.gateway.routers.teacher_assignments import router as teacher_assignments_router
 from services.gateway.routers.teacher_classes import router as teacher_classes_router
 from services.gateway.routers.student_enrollments import router as student_enrollments_router
+from services.gateway.routers.imports import router as imports_router
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -139,6 +140,7 @@ app.include_router(academic_structure_router)
 app.include_router(teacher_assignments_router)
 app.include_router(teacher_classes_router)
 app.include_router(student_enrollments_router)
+app.include_router(imports_router)
 
 # =============================================================================
 # ROUTES

@@ -587,6 +587,83 @@ class StudentParent(Base):
 
 
 # ─────────────────────────────────────────────────────────────────────────────
+# ImportBatch / ImportRowResult  (CSV import history)
+# ─────────────────────────────────────────────────────────────────────────────
+
+class ImportBatch(Base):
+    """
+    Tracks one leadership import attempt.
+
+    A batch stores the file metadata, the import kind, the execution mode,
+    and the final row counts so import history can be reviewed later without
+    re-running the CSV.
+    """
+
+    __tablename__ = "import_batches"
+
+    id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    tenant_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), ForeignKey("tenants.id", ondelete="CASCADE"), nullable=False, index=True)
+    entity_type: Mapped[str] = mapped_column(String(50), nullable=False, index=True)
+    original_filename: Mapped[str | None] = mapped_column(String(255), nullable=True)
+    file_sha256: Mapped[str] = mapped_column(String(64), nullable=False, index=True)
+    status: Mapped[str] = mapped_column(String(30), nullable=False, index=True)
+    mode: Mapped[str] = mapped_column(String(20), nullable=False, index=True)
+    created_by_user_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), ForeignKey("users.id", ondelete="RESTRICT"), nullable=False, index=True)
+    total_rows: Mapped[int] = mapped_column(Integer, nullable=False, server_default="0")
+    valid_rows: Mapped[int] = mapped_column(Integer, nullable=False, server_default="0")
+    invalid_rows: Mapped[int] = mapped_column(Integer, nullable=False, server_default="0")
+    created_rows: Mapped[int] = mapped_column(Integer, nullable=False, server_default="0")
+    updated_rows: Mapped[int] = mapped_column(Integer, nullable=False, server_default="0")
+    skipped_rows: Mapped[int] = mapped_column(Integer, nullable=False, server_default="0")
+    conflict_rows: Mapped[int] = mapped_column(Integer, nullable=False, server_default="0")
+    started_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now(), nullable=False)
+    completed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    committed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now(), nullable=False)
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now(), nullable=False)
+
+    rows: Mapped[list["ImportRowResult"]] = relationship("ImportRowResult", back_populates="batch", cascade="all, delete-orphan")
+
+    __table_args__ = (
+        CheckConstraint("entity_type IN ('subjects','classes','teachers','students','parents')", name="ck_import_batches_entity_type"),
+        CheckConstraint("mode IN ('preview','commit')", name="ck_import_batches_mode"),
+        CheckConstraint("status IN ('uploaded','validating','preview_ready','invalid','committing','completed','completed_with_errors','failed','cancelled')", name="ck_import_batches_status"),
+    )
+
+
+class ImportRowResult(Base):
+    """
+    Stores the outcome for one CSV row within a batch.
+    """
+
+    __tablename__ = "import_row_results"
+
+    id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    tenant_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), ForeignKey("tenants.id", ondelete="CASCADE"), nullable=False, index=True)
+    import_batch_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), ForeignKey("import_batches.id", ondelete="CASCADE"), nullable=False, index=True)
+    row_number: Mapped[int] = mapped_column(Integer, nullable=False)
+    status: Mapped[str] = mapped_column(String(20), nullable=False, index=True)
+    action: Mapped[str] = mapped_column(String(20), nullable=False, index=True)
+    entity_reference_id: Mapped[uuid.UUID | None] = mapped_column(UUID(as_uuid=True), nullable=True)
+    error_code: Mapped[str | None] = mapped_column(String(80), nullable=True)
+    error_message: Mapped[str | None] = mapped_column(Text, nullable=True)
+    field_errors: Mapped[dict] = mapped_column(JSON, default=dict)
+    normalized_data: Mapped[dict] = mapped_column(JSON, default=dict)
+    row_data: Mapped[dict] = mapped_column(JSON, default=dict)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now(), nullable=False)
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now(), nullable=False)
+
+    batch: Mapped["ImportBatch"] = relationship("ImportBatch", back_populates="rows")
+
+    __table_args__ = (
+        CheckConstraint("row_number > 0", name="ck_import_row_results_row_number_positive"),
+        CheckConstraint("status IN ('valid','invalid','conflict','created','updated','skipped','failed')", name="ck_import_row_results_status"),
+        CheckConstraint("action IN ('create','update','skip','none')", name="ck_import_row_results_action"),
+        UniqueConstraint("import_batch_id", "row_number", name="uq_import_row_results_batch_row"),
+    )
+
+
+# ─────────────────────────────────────────────────────────────────────────────
 # AuditLog  (immutable event log)
 # ─────────────────────────────────────────────────────────────────────────────
 

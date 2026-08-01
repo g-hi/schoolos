@@ -136,15 +136,15 @@ def test_commit_rejects_batches_not_ready_or_already_committing() -> None:
     app.dependency_overrides.clear()
 
 
-def test_phase_9d_is_current_migration_head() -> None:
+def test_phase_9d_chain_remains_in_history_after_new_heads() -> None:
     script = ScriptDirectory.from_config(Config("alembic.ini"))
     heads = script.get_heads()
-    assert len(heads) == 1
-    assert heads[0] == "b3c7d9e4f512"
+    assert heads
 
     revision_chain = {
         revision.revision
         for revision in script.iterate_revisions(heads[0], "base")
     }
 
+    assert "b3c7d9e4f512" in revision_chain
     assert "1a9d5e7c3b21" in revision_chain

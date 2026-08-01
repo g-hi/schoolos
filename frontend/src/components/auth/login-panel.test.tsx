@@ -23,6 +23,8 @@ describe("login-panel", () => {
     loginMock.mockResolvedValue({ role: "teacher" });
     render(<LoginPanel />);
 
+    expect(screen.getByText("Activate invited account").closest("a")).toHaveAttribute("href", "/activate-account");
+
     fireEvent.change(screen.getByLabelText("Email"), { target: { value: " teacher@example.com " } });
     fireEvent.change(screen.getByLabelText("Password"), { target: { value: "pass123" } });
     fireEvent.change(screen.getByLabelText("Tenant Slug"), { target: { value: " GREENWOOD " } });

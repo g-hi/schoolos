@@ -43,6 +43,7 @@ describe("sidebar route mode", () => {
     mockedUseAuth.mockReturnValue({ user: { role: "teacher" }, logout: vi.fn() });
     rerender(<Sidebar />);
     expect(screen.queryByText("Family Hub")).not.toBeInTheDocument();
+    expect(screen.queryByText("People & Families")).not.toBeInTheDocument();
     expect(screen.getByText("My Classes")).toBeInTheDocument();
     expect(screen.getByText("Appointments").closest("a")).toHaveAttribute("href", "/teacher/appointments");
     expect(screen.getByText("Weekly Reports").closest("a")).toHaveAttribute("href", "/teacher/reports");
@@ -51,6 +52,7 @@ describe("sidebar route mode", () => {
     mockedUseAuth.mockReturnValue({ user: { role: "principal" }, logout: vi.fn() });
     rerender(<Sidebar />);
     expect(screen.queryByText("Family Hub")).not.toBeInTheDocument();
+    expect(screen.getByText("People & Families").closest("a")).toHaveAttribute("href", "/people");
     expect(screen.getByText("Appointments").closest("a")).toHaveAttribute("href", "/appointments");
     expect(screen.getByText("Announcements").closest("a")).toHaveAttribute("href", "/announcements");
     expect(screen.getByText("Timetable")).toBeInTheDocument();

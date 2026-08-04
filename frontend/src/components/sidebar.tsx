@@ -21,6 +21,7 @@ const principalNav = [
   { href: "/announcements", label: "Announcements", icon: "📣" },
   { href: "/pickup", label: "Pickup", icon: "🚗" },
   { href: "/data", label: "Data Imports", icon: "📁" },
+  { href: "/onboarding", label: "School Setup", icon: "🧭" },
   { href: "/academic-structure", label: "Academic Structure", icon: "🏗️" },
   { href: "/social", label: "Social Media", icon: "📱" },
   { href: "/audit", label: "Audit Trail", icon: "🔍" },

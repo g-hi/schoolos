@@ -664,6 +664,65 @@ class ImportRowResult(Base):
 
 
 # ─────────────────────────────────────────────────────────────────────────────
+# SchoolOnboardingRun / SchoolOnboardingStep  (Phase 9E onboarding workflow)
+# ─────────────────────────────────────────────────────────────────────────────
+
+class SchoolOnboardingRun(Base):
+    __tablename__ = "school_onboarding_runs"
+
+    id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    tenant_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), ForeignKey("tenants.id", ondelete="CASCADE"), nullable=False, index=True)
+    status: Mapped[str] = mapped_column(String(20), nullable=False, index=True)
+    current_step_key: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    started_by_user_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), ForeignKey("users.id", ondelete="RESTRICT"), nullable=False, index=True)
+    completed_by_user_id: Mapped[uuid.UUID | None] = mapped_column(UUID(as_uuid=True), ForeignKey("users.id", ondelete="RESTRICT"), nullable=True, index=True)
+    started_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, server_default=func.now())
+    completed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    paused_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, server_default=func.now())
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, server_default=func.now(), onupdate=func.now())
+
+    __table_args__ = (
+        CheckConstraint("status IN ('in_progress','paused','ready','completed','cancelled')", name="ck_school_onboarding_runs_status"),
+        CheckConstraint("(status <> 'completed') OR (completed_at IS NOT NULL AND completed_by_user_id IS NOT NULL)", name="ck_school_onboarding_runs_completed_fields"),
+        CheckConstraint("completed_at IS NULL OR completed_at >= started_at", name="ck_school_onboarding_runs_completed_after_started"),
+        Index(
+            "uq_school_onboarding_runs_active_per_tenant",
+            "tenant_id",
+            unique=True,
+            postgresql_where=and_(status.in_(["in_progress", "paused", "ready"])),
+        ),
+    )
+
+
+class SchoolOnboardingStep(Base):
+    __tablename__ = "school_onboarding_steps"
+
+    id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    tenant_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), ForeignKey("tenants.id", ondelete="CASCADE"), nullable=False, index=True)
+    onboarding_run_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), ForeignKey("school_onboarding_runs.id", ondelete="RESTRICT"), nullable=False, index=True)
+    step_key: Mapped[str] = mapped_column(String(64), nullable=False, index=True)
+    status: Mapped[str] = mapped_column(String(20), nullable=False, index=True)
+    completion_source: Mapped[str | None] = mapped_column(String(20), nullable=True)
+    acknowledged_by_user_id: Mapped[uuid.UUID | None] = mapped_column(UUID(as_uuid=True), ForeignKey("users.id", ondelete="RESTRICT"), nullable=True, index=True)
+    acknowledged_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    blocked_reason: Mapped[str | None] = mapped_column(Text, nullable=True)
+    metadata_json: Mapped[dict | None] = mapped_column(JSON, nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, server_default=func.now())
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, server_default=func.now(), onupdate=func.now())
+
+    __table_args__ = (
+        CheckConstraint("status IN ('not_started','in_progress','blocked','completed','skipped')", name="ck_school_onboarding_steps_status"),
+        CheckConstraint("completion_source IS NULL OR completion_source IN ('computed','manual','imported')", name="ck_school_onboarding_steps_completion_source"),
+        CheckConstraint(
+            "(completion_source <> 'manual' AND status <> 'skipped') OR (acknowledged_by_user_id IS NOT NULL AND acknowledged_at IS NOT NULL)",
+            name="ck_school_onboarding_steps_manual_ack",
+        ),
+        UniqueConstraint("onboarding_run_id", "step_key", name="uq_school_onboarding_steps_run_step"),
+    )
+
+
+# ─────────────────────────────────────────────────────────────────────────────
 # AuditLog  (immutable event log)
 # ─────────────────────────────────────────────────────────────────────────────
 

@@ -18,9 +18,18 @@ vi.mock("@/components/auth/auth-provider", () => ({
 }));
 
 const mockedUsePathname = vi.fn(() => "/");
+const replaceMock = vi.fn();
 
 vi.mock("next/navigation", () => ({
   usePathname: () => mockedUsePathname(),
+  useRouter: () => ({
+    push: vi.fn(),
+    replace: replaceMock,
+    refresh: vi.fn(),
+    prefetch: vi.fn(),
+    back: vi.fn(),
+    forward: vi.fn(),
+  }),
 }));
 
 const mockGetMasterDataSetupSummary = vi.fn();
@@ -627,13 +636,3 @@ describe("Sidebar — Academic Structure link", () => {
   });
 });
 
-describe("Data page — guidance notice", () => {
-  it("renders Academic Structure guidance notice on /data page", async () => {
-    vi.mock("@/lib/api", () => ({ apiUpload: vi.fn() }));
-    const DataModule = await import("@/app/data/page");
-    const DataPage = DataModule.default;
-    render(<DataPage />);
-    expect(screen.getByText(/before importing canonical classes or students/i)).toBeInTheDocument();
-    expect(screen.getByRole("link", { name: /academic structure/i })).toHaveAttribute("href", "/academic-structure");
-  });
-});

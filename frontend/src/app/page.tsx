@@ -1,8 +1,10 @@
 "use client";
 
 import { useEffect, useState } from "react";
+import Link from "next/link";
 import { api } from "@/lib/api";
 import StatCard from "@/components/stat-card";
+import { getOnboardingReadiness, type OnboardingReadinessResponse } from "@/lib/onboarding-api";
 
 interface DashboardData {
   period: string;
@@ -36,6 +38,7 @@ interface DashboardData {
 
 export default function DashboardPage() {
   const [data, setData] = useState<DashboardData | null>(null);
+  const [onboarding, setOnboarding] = useState<OnboardingReadinessResponse | null>(null);
   const [loading, setLoading] = useState(true);
 
   useEffect(() => {
@@ -43,6 +46,10 @@ export default function DashboardPage() {
       .then(setData)
       .catch(console.error)
       .finally(() => setLoading(false));
+
+    getOnboardingReadiness()
+      .then(setOnboarding)
+      .catch(() => setOnboarding(null));
   }, []);
 
   if (loading) return <Skeleton />;
@@ -64,6 +71,23 @@ export default function DashboardPage() {
           Refresh
         </button>
       </div>
+
+      <h2 className="text-lg font-semibold mb-3">Teacher Load</h2>
+      {onboarding ? (
+        <div className="rounded-xl border border-gray-200 bg-white p-4 mb-6">
+          <div className="flex items-center justify-between gap-3">
+            <div>
+              <h2 className="text-base font-semibold">School Setup</h2>
+              <p className="text-sm text-gray-600">
+                Readiness {onboarding.readiness_percentage}% · Blockers {onboarding.blocker_count} · State {onboarding.state}
+              </p>
+            </div>
+            <Link href="/onboarding" className="rounded-lg border border-indigo-200 bg-indigo-50 px-3 py-1.5 text-sm font-medium text-indigo-700 hover:bg-indigo-100">
+              Open Workspace
+            </Link>
+          </div>
+        </div>
+      ) : null}
 
       <h2 className="text-lg font-semibold mb-3">Teacher Load</h2>
       <div className="grid grid-cols-1 md:grid-cols-3 gap-4 mb-8">

@@ -53,10 +53,27 @@ describe("sidebar route mode", () => {
     rerender(<Sidebar />);
     expect(screen.queryByText("Family Hub")).not.toBeInTheDocument();
     expect(screen.getByText("People & Families").closest("a")).toHaveAttribute("href", "/people");
+    expect(screen.getByText("School Setup").closest("a")).toHaveAttribute("href", "/onboarding");
     expect(screen.getByText("Appointments").closest("a")).toHaveAttribute("href", "/appointments");
     expect(screen.getByText("Announcements").closest("a")).toHaveAttribute("href", "/announcements");
     expect(screen.getByText("Data Imports").closest("a")).toHaveAttribute("href", "/data");
     expect(screen.getByText("Timetable")).toBeInTheDocument();
     expect(screen.getByText("Weekly Reports").closest("a")).toHaveAttribute("href", "/reports/review");
+
+    mockedUsePathname.mockReturnValue("/");
+    mockedUseAuth.mockReturnValue({ user: { role: "school_admin" }, logout: vi.fn() });
+    rerender(<Sidebar />);
+    expect(screen.getByText("School Setup")).toBeInTheDocument();
+    expect(screen.getAllByText("School Setup")).toHaveLength(1);
+
+    mockedUsePathname.mockReturnValue("/teacher");
+    mockedUseAuth.mockReturnValue({ user: { role: "teacher" }, logout: vi.fn() });
+    rerender(<Sidebar />);
+    expect(screen.queryByText("School Setup")).not.toBeInTheDocument();
+
+    mockedUsePathname.mockReturnValue("/parent");
+    mockedUseAuth.mockReturnValue({ user: { role: "parent" }, logout: vi.fn() });
+    rerender(<Sidebar />);
+    expect(screen.queryByText("School Setup")).not.toBeInTheDocument();
   });
 });

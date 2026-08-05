@@ -20,7 +20,7 @@ class Settings(BaseSettings):
 
     On Render, SECRET_KEY is auto-generated via generateValue: true in render.yaml.
     """
-
+    
     model_config = SettingsConfigDict(
         env_file=".env",
         env_file_encoding="utf-8",
@@ -72,6 +72,7 @@ class Settings(BaseSettings):
     app_env: str = "development"
     app_port: int = 8000
     log_level: str = "INFO"
+    cors_allowed_origins: str = ""
 
 
 @lru_cache

@@ -483,9 +483,15 @@ def test_fixed_catalogue_is_exact_and_arbitrary_keys_are_rejected() -> None:
 def test_phase_9e_migration_head_and_chain() -> None:
     script = ScriptDirectory.from_config(Config("alembic.ini"))
     heads = script.get_heads()
-    assert heads == ["c4f7a8e2d911"]
 
-    revision_chain = {revision.revision for revision in script.iterate_revisions(heads[0], "base")}
+    assert len(heads) == 1
+
+    revision_chain = {
+        revision.revision
+        for revision in script.iterate_revisions(heads[0], "base")
+    }
+
+    assert "c4f7a8e2d911" in revision_chain
     assert "b3c7d9e4f512" in revision_chain
 
 

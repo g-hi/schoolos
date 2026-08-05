@@ -723,6 +723,284 @@ class SchoolOnboardingStep(Base):
 
 
 # ─────────────────────────────────────────────────────────────────────────────
+# Phase 10A Timetable Setup Foundation (canonical intake records)
+# ─────────────────────────────────────────────────────────────────────────────
+
+class OperationalCalendarEvent(Base):
+    __tablename__ = "operational_calendar_events"
+
+    id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    tenant_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), ForeignKey("tenants.id", ondelete="CASCADE"), nullable=False, index=True)
+    campus_id: Mapped[uuid.UUID | None] = mapped_column(UUID(as_uuid=True), ForeignKey("campuses.id", ondelete="SET NULL"), nullable=True, index=True)
+    academic_year_id: Mapped[uuid.UUID | None] = mapped_column(UUID(as_uuid=True), ForeignKey("academic_years.id", ondelete="SET NULL"), nullable=True, index=True)
+    term_id: Mapped[uuid.UUID | None] = mapped_column(UUID(as_uuid=True), ForeignKey("terms.id", ondelete="SET NULL"), nullable=True, index=True)
+    event_name: Mapped[str] = mapped_column(String(255), nullable=False)
+    description: Mapped[str | None] = mapped_column(Text, nullable=True)
+    start_date: Mapped[date_type] = mapped_column(Date, nullable=False)
+    end_date: Mapped[date_type] = mapped_column(Date, nullable=False)
+    is_all_day: Mapped[bool] = mapped_column(Boolean, nullable=False, server_default="true")
+    event_type: Mapped[str] = mapped_column(String(50), nullable=False, index=True)
+    teaching_day_effect: Mapped[str] = mapped_column(String(40), nullable=False, server_default="no_change")
+    source_type: Mapped[str] = mapped_column(String(40), nullable=False, server_default="manual")
+    review_status: Mapped[str] = mapped_column(String(30), nullable=False, server_default="pending_review", index=True)
+    source_reference: Mapped[str | None] = mapped_column(String(255), nullable=True)
+    import_batch_id: Mapped[uuid.UUID | None] = mapped_column(UUID(as_uuid=True), ForeignKey("import_batches.id", ondelete="SET NULL"), nullable=True, index=True)
+    original_source_text: Mapped[str | None] = mapped_column(Text, nullable=True)
+    created_by_user_id: Mapped[uuid.UUID | None] = mapped_column(UUID(as_uuid=True), ForeignKey("users.id", ondelete="SET NULL"), nullable=True)
+    reviewed_by_user_id: Mapped[uuid.UUID | None] = mapped_column(UUID(as_uuid=True), ForeignKey("users.id", ondelete="SET NULL"), nullable=True)
+    approved_by_user_id: Mapped[uuid.UUID | None] = mapped_column(UUID(as_uuid=True), ForeignKey("users.id", ondelete="SET NULL"), nullable=True)
+    is_active: Mapped[bool] = mapped_column(Boolean, nullable=False, server_default="true")
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, server_default=func.now())
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, server_default=func.now(), onupdate=func.now())
+
+    __table_args__ = (
+        CheckConstraint("end_date >= start_date", name="ck_operational_calendar_event_date_range"),
+        CheckConstraint(
+            "event_type IN ('teaching_day_override','public_holiday','school_holiday','examination_period','professional_development','parent_conference','school_event','half_day','special_schedule','term_boundary','information_only')",
+            name="ck_operational_calendar_event_type",
+        ),
+        CheckConstraint(
+            "teaching_day_effect IN ('no_change','non_teaching_day','teaching_day','special_schedule')",
+            name="ck_operational_calendar_teaching_day_effect",
+        ),
+        CheckConstraint(
+            "source_type IN ('manual','excel_import','csv_import','pdf_extraction','agent_recommendation','system_generated')",
+            name="ck_operational_calendar_source_type",
+        ),
+        CheckConstraint(
+            "review_status IN ('pending_review','approved','rejected')",
+            name="ck_operational_calendar_review_status",
+        ),
+        Index(
+            "uq_operational_calendar_event_active_identity",
+            "tenant_id",
+            "campus_id",
+            "academic_year_id",
+            "term_id",
+            "event_name",
+            "start_date",
+            "end_date",
+            "event_type",
+            unique=True,
+            postgresql_where=and_(is_active.is_(True)),
+        ),
+    )
+
+
+class SchoolWeekConfig(Base):
+    __tablename__ = "school_week_configs"
+
+    id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    tenant_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), ForeignKey("tenants.id", ondelete="CASCADE"), nullable=False, index=True)
+    campus_id: Mapped[uuid.UUID | None] = mapped_column(UUID(as_uuid=True), ForeignKey("campuses.id", ondelete="SET NULL"), nullable=True, index=True)
+    academic_year_id: Mapped[uuid.UUID | None] = mapped_column(UUID(as_uuid=True), ForeignKey("academic_years.id", ondelete="SET NULL"), nullable=True, index=True)
+    term_id: Mapped[uuid.UUID | None] = mapped_column(UUID(as_uuid=True), ForeignKey("terms.id", ondelete="SET NULL"), nullable=True, index=True)
+    name: Mapped[str] = mapped_column(String(100), nullable=False)
+    operational_weekdays: Mapped[list] = mapped_column(JSON, nullable=False, default=list)
+    is_default: Mapped[bool] = mapped_column(Boolean, nullable=False, server_default="true")
+    source_type: Mapped[str] = mapped_column(String(40), nullable=False, server_default="manual")
+    review_status: Mapped[str] = mapped_column(String(30), nullable=False, server_default="approved")
+    is_active: Mapped[bool] = mapped_column(Boolean, nullable=False, server_default="true")
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, server_default=func.now())
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, server_default=func.now(), onupdate=func.now())
+
+    __table_args__ = (
+        CheckConstraint(
+            "source_type IN ('manual','excel_import','csv_import','pdf_extraction','agent_recommendation','system_generated')",
+            name="ck_school_week_source_type",
+        ),
+        CheckConstraint(
+            "review_status IN ('pending_review','approved','rejected')",
+            name="ck_school_week_review_status",
+        ),
+        Index(
+            "uq_school_week_default_active_scope",
+            "tenant_id",
+            "campus_id",
+            "academic_year_id",
+            "term_id",
+            unique=True,
+            postgresql_where=and_(is_active.is_(True), is_default.is_(True)),
+        ),
+    )
+
+
+class BellSchedule(Base):
+    __tablename__ = "bell_schedules"
+
+    id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    tenant_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), ForeignKey("tenants.id", ondelete="CASCADE"), nullable=False, index=True)
+    campus_id: Mapped[uuid.UUID | None] = mapped_column(UUID(as_uuid=True), ForeignKey("campuses.id", ondelete="SET NULL"), nullable=True, index=True)
+    academic_year_id: Mapped[uuid.UUID | None] = mapped_column(UUID(as_uuid=True), ForeignKey("academic_years.id", ondelete="SET NULL"), nullable=True, index=True)
+    term_id: Mapped[uuid.UUID | None] = mapped_column(UUID(as_uuid=True), ForeignKey("terms.id", ondelete="SET NULL"), nullable=True, index=True)
+    school_week_config_id: Mapped[uuid.UUID | None] = mapped_column(UUID(as_uuid=True), ForeignKey("school_week_configs.id", ondelete="SET NULL"), nullable=True, index=True)
+    name: Mapped[str] = mapped_column(String(120), nullable=False)
+    schedule_type: Mapped[str] = mapped_column(String(50), nullable=False, server_default="normal")
+    effective_start_date: Mapped[date_type | None] = mapped_column(Date, nullable=True)
+    effective_end_date: Mapped[date_type | None] = mapped_column(Date, nullable=True)
+    is_default: Mapped[bool] = mapped_column(Boolean, nullable=False, server_default="true")
+    source_type: Mapped[str] = mapped_column(String(40), nullable=False, server_default="manual")
+    review_status: Mapped[str] = mapped_column(String(30), nullable=False, server_default="approved")
+    is_active: Mapped[bool] = mapped_column(Boolean, nullable=False, server_default="true")
+    created_by_user_id: Mapped[uuid.UUID | None] = mapped_column(UUID(as_uuid=True), ForeignKey("users.id", ondelete="SET NULL"), nullable=True)
+    approved_by_user_id: Mapped[uuid.UUID | None] = mapped_column(UUID(as_uuid=True), ForeignKey("users.id", ondelete="SET NULL"), nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, server_default=func.now())
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, server_default=func.now(), onupdate=func.now())
+
+    __table_args__ = (
+        CheckConstraint(
+            "effective_end_date IS NULL OR effective_start_date IS NULL OR effective_end_date >= effective_start_date",
+            name="ck_bell_schedule_effective_date_range",
+        ),
+        CheckConstraint(
+            "source_type IN ('manual','excel_import','csv_import','pdf_extraction','agent_recommendation','system_generated')",
+            name="ck_bell_schedule_source_type",
+        ),
+        CheckConstraint(
+            "review_status IN ('pending_review','approved','rejected')",
+            name="ck_bell_schedule_review_status",
+        ),
+        Index(
+            "uq_bell_schedule_default_active_scope",
+            "tenant_id",
+            "campus_id",
+            "academic_year_id",
+            "term_id",
+            unique=True,
+            postgresql_where=and_(is_active.is_(True), is_default.is_(True)),
+        ),
+    )
+
+
+class BellSchedulePeriod(Base):
+    __tablename__ = "bell_schedule_periods"
+
+    id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    tenant_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), ForeignKey("tenants.id", ondelete="CASCADE"), nullable=False, index=True)
+    bell_schedule_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), ForeignKey("bell_schedules.id", ondelete="CASCADE"), nullable=False, index=True)
+    applicable_grade_level_id: Mapped[uuid.UUID | None] = mapped_column(UUID(as_uuid=True), ForeignKey("grade_levels.id", ondelete="SET NULL"), nullable=True, index=True)
+    period_number: Mapped[int] = mapped_column(Integer, nullable=False)
+    label: Mapped[str] = mapped_column(String(60), nullable=False)
+    start_time: Mapped[str] = mapped_column(String(5), nullable=False)
+    end_time: Mapped[str] = mapped_column(String(5), nullable=False)
+    is_teaching_period: Mapped[bool] = mapped_column(Boolean, nullable=False, server_default="true")
+    is_break: Mapped[bool] = mapped_column(Boolean, nullable=False, server_default="false")
+    is_lunch: Mapped[bool] = mapped_column(Boolean, nullable=False, server_default="false")
+    is_active: Mapped[bool] = mapped_column(Boolean, nullable=False, server_default="true")
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, server_default=func.now())
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, server_default=func.now(), onupdate=func.now())
+
+    __table_args__ = (
+        CheckConstraint("period_number > 0", name="ck_bell_schedule_period_number_positive"),
+        Index(
+            "uq_bell_schedule_period_number_active",
+            "tenant_id",
+            "bell_schedule_id",
+            "period_number",
+            unique=True,
+            postgresql_where=and_(is_active.is_(True)),
+        ),
+    )
+
+
+class TeachingRoom(Base):
+    __tablename__ = "teaching_rooms"
+
+    id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    tenant_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), ForeignKey("tenants.id", ondelete="CASCADE"), nullable=False, index=True)
+    campus_id: Mapped[uuid.UUID | None] = mapped_column(UUID(as_uuid=True), ForeignKey("campuses.id", ondelete="SET NULL"), nullable=True, index=True)
+    room_code: Mapped[str] = mapped_column(String(50), nullable=False)
+    room_name: Mapped[str] = mapped_column(String(255), nullable=False)
+    room_type: Mapped[str] = mapped_column(String(50), nullable=False)
+    capacity: Mapped[int] = mapped_column(Integer, nullable=False, server_default="0")
+    floor_or_location: Mapped[str | None] = mapped_column(String(120), nullable=True)
+    specialist_capabilities: Mapped[list] = mapped_column(JSON, nullable=False, default=list)
+    accessibility_notes: Mapped[str | None] = mapped_column(Text, nullable=True)
+    source_type: Mapped[str] = mapped_column(String(40), nullable=False, server_default="manual")
+    review_status: Mapped[str] = mapped_column(String(30), nullable=False, server_default="approved")
+    is_active: Mapped[bool] = mapped_column(Boolean, nullable=False, server_default="true")
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, server_default=func.now())
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, server_default=func.now(), onupdate=func.now())
+
+    __table_args__ = (
+        CheckConstraint("capacity >= 0", name="ck_teaching_rooms_capacity_non_negative"),
+        CheckConstraint(
+            "room_type IN ('standard_classroom','science_lab','computer_lab','art_room','music_room','sports_space','library','examination_hall','multipurpose','virtual')",
+            name="ck_teaching_rooms_room_type",
+        ),
+        CheckConstraint(
+            "source_type IN ('manual','excel_import','csv_import','pdf_extraction','agent_recommendation','system_generated')",
+            name="ck_teaching_rooms_source_type",
+        ),
+        CheckConstraint(
+            "review_status IN ('pending_review','approved','rejected')",
+            name="ck_teaching_rooms_review_status",
+        ),
+        UniqueConstraint("tenant_id", "campus_id", "room_code", name="uq_teaching_rooms_code_per_scope"),
+    )
+
+
+class WeeklyTeachingRequirement(Base):
+    __tablename__ = "weekly_teaching_requirements"
+
+    id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    tenant_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), ForeignKey("tenants.id", ondelete="CASCADE"), nullable=False, index=True)
+    campus_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), ForeignKey("campuses.id", ondelete="RESTRICT"), nullable=False, index=True)
+    academic_year_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), ForeignKey("academic_years.id", ondelete="RESTRICT"), nullable=False, index=True)
+    term_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), ForeignKey("terms.id", ondelete="RESTRICT"), nullable=False, index=True)
+    class_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), ForeignKey("classes.id", ondelete="RESTRICT"), nullable=False, index=True)
+    subject_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), ForeignKey("subjects.id", ondelete="RESTRICT"), nullable=False, index=True)
+    teacher_id: Mapped[uuid.UUID | None] = mapped_column(UUID(as_uuid=True), ForeignKey("teachers.id", ondelete="SET NULL"), nullable=True, index=True)
+    sessions_per_week: Mapped[int] = mapped_column(Integer, nullable=False)
+    periods_per_session: Mapped[int] = mapped_column(Integer, nullable=False, server_default="1")
+    min_daily_sessions: Mapped[int] = mapped_column(Integer, nullable=False, server_default="0")
+    max_daily_sessions: Mapped[int] = mapped_column(Integer, nullable=False, server_default="3")
+    double_period_mode: Mapped[str] = mapped_column(String(20), nullable=False, server_default="none")
+    specialist_room_type: Mapped[str | None] = mapped_column(String(50), nullable=True)
+    preferred_period_numbers: Mapped[list] = mapped_column(JSON, nullable=False, default=list)
+    forbidden_period_numbers: Mapped[list] = mapped_column(JSON, nullable=False, default=list)
+    has_fixed_sessions: Mapped[bool] = mapped_column(Boolean, nullable=False, server_default="false")
+    fixed_session_rules: Mapped[list] = mapped_column(JSON, nullable=False, default=list)
+    priority: Mapped[int] = mapped_column(Integer, nullable=False, server_default="100")
+    source_type: Mapped[str] = mapped_column(String(40), nullable=False, server_default="manual")
+    review_status: Mapped[str] = mapped_column(String(30), nullable=False, server_default="approved")
+    is_active: Mapped[bool] = mapped_column(Boolean, nullable=False, server_default="true")
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, server_default=func.now())
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, server_default=func.now(), onupdate=func.now())
+
+    __table_args__ = (
+        CheckConstraint("sessions_per_week > 0", name="ck_weekly_teaching_requirements_sessions_positive"),
+        CheckConstraint("periods_per_session > 0", name="ck_weekly_teaching_requirements_periods_per_session_positive"),
+        CheckConstraint("min_daily_sessions >= 0", name="ck_weekly_teaching_requirements_min_daily_non_negative"),
+        CheckConstraint("max_daily_sessions >= min_daily_sessions", name="ck_weekly_teaching_requirements_daily_bounds"),
+        CheckConstraint("priority > 0", name="ck_weekly_teaching_requirements_priority_positive"),
+        CheckConstraint(
+            "double_period_mode IN ('none','preferred','required')",
+            name="ck_weekly_teaching_requirements_double_period_mode",
+        ),
+        CheckConstraint(
+            "source_type IN ('manual','excel_import','csv_import','pdf_extraction','agent_recommendation','system_generated')",
+            name="ck_weekly_teaching_requirements_source_type",
+        ),
+        CheckConstraint(
+            "review_status IN ('pending_review','approved','rejected')",
+            name="ck_weekly_teaching_requirements_review_status",
+        ),
+        Index(
+            "uq_weekly_teaching_requirements_active_identity",
+            "tenant_id",
+            "campus_id",
+            "academic_year_id",
+            "term_id",
+            "class_id",
+            "subject_id",
+            unique=True,
+            postgresql_where=and_(is_active.is_(True)),
+        ),
+    )
+
+
+# ─────────────────────────────────────────────────────────────────────────────
 # AuditLog  (immutable event log)
 # ─────────────────────────────────────────────────────────────────────────────
 

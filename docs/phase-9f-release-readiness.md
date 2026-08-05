@@ -147,3 +147,25 @@ $env:SCHOOLOS_SMOKE_TENANT_SLUG = "greenwood"
 6. Confirm import history loads.
 7. Confirm no browser console errors.
 8. Confirm no secrets are exposed in logs.
+
+## Batch 2 Validation Evidence (2026-08-05)
+
+- Environment gate passed with `C:\Users\Gampi\Downloads\schoolos\.venv\Scripts\python.exe` and `C:\Users\Gampi\Downloads\schoolos\.venv\Scripts\alembic.exe`.
+- Branch validated as `feature/phase-9f-release-readiness` at commit `a86fb2d` during gate execution.
+- Backend full regression: `425 passed`, `2 skipped`, `0 failed`, `47 warnings`, `27.09s`.
+- Frontend full regression: `25 passed` files, `190 passed` tests, `0 failed`, duration `36.69s`.
+- Frontend production build succeeded: compile, TypeScript, and static generation completed; `/onboarding` and leadership routes were generated.
+- Alembic chain check passed with one head `c4f7a8e2d911`; history remained connected through Phase 9E revisions.
+- Local migration runtime round-trip (`upgrade/current/downgrade/re-upgrade/current`) remained a local verification gap because local PostgreSQL was unavailable (`ConnectionRefusedError: [WinError 1225]`).
+- Public smoke script executed against local default `http://127.0.0.1:8000`; `/health` was unavailable because local gateway was not running (documented environment limitation).
+- Authenticated smoke checks were intentionally skipped because no local credentials were provided.
+
+## Deployment Configuration Findings
+
+- Render backend service is configured to deploy from branch `master`; this is expected because production deployment occurs after feature branches are merged.
+- Backend container startup runs `alembic upgrade head` before `uvicorn`, and binds host `0.0.0.0` with platform `PORT` fallback.
+- `/health` is publicly exposed in gateway routing and suitable for platform health checks.
+- Backend DB configuration is environment-driven (`DATABASE_URL`), with no hard-coded production credentials in reviewed deployment files.
+- Frontend API base URL is sourced from `NEXT_PUBLIC_API_URL` with a hosted fallback; ensure production value is explicitly set to avoid accidental environment coupling.
+- CORS hardening is environment-driven through `CORS_ALLOWED_ORIGINS` (comma-separated). Wildcard `*` is neutralized for credentialed requests, whitespace/empty entries are ignored, and missing configuration resolves to an empty allowlist.
+- Local development cross-origin access must be explicitly configured by setting `CORS_ALLOWED_ORIGINS` to known localhost origins (for example `http://localhost:3000,http://127.0.0.1:3000`); no implicit wildcard development fallback is used.

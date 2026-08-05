@@ -16,6 +16,7 @@ For Phase 0, it provides:
 """
 
 from contextlib import asynccontextmanager
+from typing import Any
 
 from fastapi import Depends, FastAPI
 from fastapi.middleware.cors import CORSMiddleware
@@ -97,17 +98,39 @@ app = FastAPI(
     lifespan=lifespan,
 )
 
+
+def _parse_cors_allowed_origins(raw: str | None) -> list[str]:
+  """Parse comma-separated CORS origins and drop unsafe wildcard entries."""
+  if not raw:
+    return []
+
+  allowed: list[str] = []
+  for part in raw.split(","):
+    origin = part.strip()
+    if not origin:
+      continue
+    # Never allow wildcard when credentials are enabled.
+    if origin == "*":
+      continue
+    allowed.append(origin)
+  return allowed
+
+
+def _build_cors_middleware_options(*, app_env: str, cors_allowed_origins_raw: str | None) -> dict[str, Any]:
+  """Build CORS middleware options with an environment-driven allowlist."""
+  del app_env
+  allowed_origins = _parse_cors_allowed_origins(cors_allowed_origins_raw)
+  return {
+    "allow_origins": allowed_origins,
+    "allow_credentials": True,
+    "allow_methods": ["*"],
+    "allow_headers": ["*"],
+  }
+
 # ── CORS ─────────────────────────────────────────────────────────────────────
-# In development, allow all origins so you can call the API from Postman,
-# a browser, or any frontend without issues.
-# In production, this should be locked to your actual domain.
-app.add_middleware(
-    CORSMiddleware,
-    allow_origins=["*"],
-    allow_credentials=True,
-    allow_methods=["*"],
-    allow_headers=["*"],
-)
+# CORS origins are loaded from CORS_ALLOWED_ORIGINS as a comma-separated list.
+# Missing or empty configuration produces an empty allowlist (fail-safe).
+app.add_middleware(CORSMiddleware, **_build_cors_middleware_options(app_env=settings.app_env, cors_allowed_origins_raw=settings.cors_allowed_origins))
 
 
 # =============================================================================

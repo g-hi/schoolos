@@ -1,4 +1,4 @@
-# Phase 10A Batches 1-2: Timetable Data Intake Foundation + Workbook Imports
+# Phase 10A Batches 1-3A: Timetable Data Intake, Workbook Imports, and Calendar Lifecycle
 
 ## AI-Native Policy Alignment
 SchoolOS remains an AI-native operating system with explicit human oversight.
@@ -160,6 +160,29 @@ Planned later:
 - extraction of candidate calendar entries
 - mandatory leadership review and approval boundaries
 
+## Batch 3A Calendar Lifecycle and PDF Intake
+Batch 3A introduces backend-only support for:
+- safe PDF intake for calendar extraction
+- deterministic candidate extraction (no OCR)
+- manual apply/reject controls for extracted candidates
+- versioned calendar updates with supersession history
+- stakeholder impact capture and notification planning
+
+New backend entities:
+- `CalendarSourceDocument`
+- `CalendarSourcePage`
+- `CalendarEventCandidate`
+
+`OperationalCalendarEvent` lifecycle additions:
+- `lifecycle_status` (`draft`, `pending_review`, `approved`, `published`, `superseded`, `archived`, `rejected`)
+- `version_number` and `previous_version_event_id`
+- `change_reason` and `impact_scope_json`
+- `notification_plan_status` and `notification_plan_json`
+- `published_at` and `published_by_user_id`
+
+Import reuse:
+- `ImportBatch` and `ImportRowResult` now also support `calendar_pdf` batches with `import_format=pdf`.
+
 ## Provenance and Review States
 Supported provenance (`source_type`):
 - manual
@@ -220,6 +243,10 @@ Prefix: `/leadership/timetable-setup`
 
 Implemented groups:
 - calendar list/create/update/approve/reject/deactivate
+- calendar PDF intake upload/detail
+- calendar candidate apply/reject
+- calendar version creation and publish
+- calendar notification plan drafting
 - school-week list/create/update
 - bell schedules list/create/update/deactivate
 - bell periods list/create/update/deactivate
@@ -231,6 +258,37 @@ Workbook import prefix:
 - `/leadership/timetable-setup/imports/...`
 - template download, upload, list/detail, sheets/preview, mapping patch,
   validate, commit, cancel, diagnostics
+
+Calendar intake/lifecycle prefix additions:
+- `/leadership/timetable-setup/calendar/pdf-intake/upload`
+- `/leadership/timetable-setup/calendar/pdf-intake/imports`
+- `/leadership/timetable-setup/calendar/pdf-intake/imports/{document_id}`
+- `/leadership/timetable-setup/calendar/pdf-intake/imports/{document_id}/pages`
+- `/leadership/timetable-setup/calendar/pdf-intake/imports/{document_id}/extract`
+- `/leadership/timetable-setup/calendar/pdf-intake/imports/{document_id}/candidates`
+- `/leadership/timetable-setup/calendar/pdf-intake/candidates/{candidate_id}`
+- `/leadership/timetable-setup/calendar/pdf-intake/candidates/{candidate_id}/approve`
+- `/leadership/timetable-setup/calendar/pdf-intake/candidates/{candidate_id}/reject`
+- `/leadership/timetable-setup/calendar/pdf-intake/imports/{document_id}/validate`
+- `/leadership/timetable-setup/calendar/pdf-intake/imports/{document_id}/commit`
+- `/leadership/timetable-setup/calendar/pdf-intake/imports/{document_id}/cancel`
+- `/leadership/timetable-setup/calendar/pdf-intake/imports/{document_id}/diagnostics`
+- `/leadership/timetable-setup/calendar/events`
+- `/leadership/timetable-setup/calendar/events/{event_id}`
+- `/leadership/timetable-setup/calendar/events/{event_id}/submit`
+- `/leadership/timetable-setup/calendar/events/{event_id}/approve`
+- `/leadership/timetable-setup/calendar/events/{event_id}/publish`
+- `/leadership/timetable-setup/calendar/events/{event_id}/reschedule`
+- `/leadership/timetable-setup/calendar/events/{event_id}/cancel`
+- `/leadership/timetable-setup/calendar/events/{event_id}/restore`
+- `/leadership/timetable-setup/calendar/events/{event_id}/archive`
+- `/leadership/timetable-setup/calendar/events/{event_id}/versions`
+- `/leadership/timetable-setup/calendar/events/{event_id}/impact`
+- `/leadership/timetable-setup/calendar/events/{event_id}/notification-plan`
+- `/leadership/timetable-setup/calendar/notification-plans`
+- `/leadership/timetable-setup/calendar/notification-plans/{plan_id}`
+- `/leadership/timetable-setup/calendar/notification-plans/{plan_id}/approve`
+- `/leadership/timetable-setup/calendar/notification-plans/{plan_id}/cancel`
 
 No destructive DELETE routes are added.
 
@@ -247,7 +305,6 @@ Relevant regressions:
 ## Deferred Work
 This batch does not include:
 - frontend workbook pages
-- PDF extraction
 - timetable generation
 - attendance
 - substitution

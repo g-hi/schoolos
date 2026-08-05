@@ -627,10 +627,10 @@ class ImportBatch(Base):
     rows: Mapped[list["ImportRowResult"]] = relationship("ImportRowResult", back_populates="batch", cascade="all, delete-orphan")
 
     __table_args__ = (
-        CheckConstraint("entity_type IN ('subjects','classes','teachers','students','parents','timetable_workbook')", name="ck_import_batches_entity_type"),
+        CheckConstraint("entity_type IN ('subjects','classes','teachers','students','parents','timetable_workbook','calendar_pdf')", name="ck_import_batches_entity_type"),
         CheckConstraint("mode IN ('preview','commit','workbook')", name="ck_import_batches_mode"),
         CheckConstraint("status IN ('uploaded','validating','preview_ready','invalid','committing','completed','completed_with_errors','failed','cancelled','parsing','mapping_required','validation_failed','validated','committed')", name="ck_import_batches_status"),
-        CheckConstraint("import_format IS NULL OR import_format IN ('csv','xlsx')", name="ck_import_batches_format"),
+        CheckConstraint("import_format IS NULL OR import_format IN ('csv','xlsx','pdf')", name="ck_import_batches_format"),
     )
 
 
@@ -754,6 +754,15 @@ class OperationalCalendarEvent(Base):
     source_reference: Mapped[str | None] = mapped_column(String(255), nullable=True)
     import_batch_id: Mapped[uuid.UUID | None] = mapped_column(UUID(as_uuid=True), ForeignKey("import_batches.id", ondelete="SET NULL"), nullable=True, index=True)
     original_source_text: Mapped[str | None] = mapped_column(Text, nullable=True)
+    lifecycle_status: Mapped[str] = mapped_column(String(30), nullable=False, server_default="draft", index=True)
+    version_number: Mapped[int] = mapped_column(Integer, nullable=False, server_default="1")
+    previous_version_event_id: Mapped[uuid.UUID | None] = mapped_column(UUID(as_uuid=True), ForeignKey("operational_calendar_events.id", ondelete="SET NULL"), nullable=True, index=True)
+    change_reason: Mapped[str | None] = mapped_column(Text, nullable=True)
+    impact_scope_json: Mapped[dict] = mapped_column(JSON, nullable=False, default=dict)
+    notification_plan_status: Mapped[str] = mapped_column(String(30), nullable=False, server_default="not_planned", index=True)
+    notification_plan_json: Mapped[dict] = mapped_column(JSON, nullable=False, default=dict)
+    published_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    published_by_user_id: Mapped[uuid.UUID | None] = mapped_column(UUID(as_uuid=True), ForeignKey("users.id", ondelete="SET NULL"), nullable=True)
     created_by_user_id: Mapped[uuid.UUID | None] = mapped_column(UUID(as_uuid=True), ForeignKey("users.id", ondelete="SET NULL"), nullable=True)
     reviewed_by_user_id: Mapped[uuid.UUID | None] = mapped_column(UUID(as_uuid=True), ForeignKey("users.id", ondelete="SET NULL"), nullable=True)
     approved_by_user_id: Mapped[uuid.UUID | None] = mapped_column(UUID(as_uuid=True), ForeignKey("users.id", ondelete="SET NULL"), nullable=True)
@@ -779,6 +788,15 @@ class OperationalCalendarEvent(Base):
             "review_status IN ('pending_review','approved','rejected')",
             name="ck_operational_calendar_review_status",
         ),
+        CheckConstraint(
+            "lifecycle_status IN ('draft','pending_review','approved','published','rescheduled','cancelled','superseded','archived','rejected')",
+            name="ck_operational_calendar_lifecycle_status",
+        ),
+        CheckConstraint("version_number > 0", name="ck_operational_calendar_version_number_positive"),
+        CheckConstraint(
+            "notification_plan_status IN ('not_planned','planned','queued','sent','cancelled')",
+            name="ck_operational_calendar_notification_plan_status",
+        ),
         Index(
             "uq_operational_calendar_event_active_identity",
             "tenant_id",
@@ -791,6 +809,187 @@ class OperationalCalendarEvent(Base):
             "event_type",
             unique=True,
             postgresql_where=and_(is_active.is_(True)),
+        ),
+    )
+
+
+class CalendarSourceDocument(Base):
+    __tablename__ = "calendar_source_documents"
+
+    id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    tenant_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), ForeignKey("tenants.id", ondelete="CASCADE"), nullable=False, index=True)
+    import_batch_id: Mapped[uuid.UUID | None] = mapped_column(UUID(as_uuid=True), ForeignKey("import_batches.id", ondelete="SET NULL"), nullable=True, index=True)
+    original_filename: Mapped[str | None] = mapped_column(String(255), nullable=True)
+    file_sha256: Mapped[str] = mapped_column(String(64), nullable=False, index=True)
+    source_type: Mapped[str] = mapped_column(String(30), nullable=False, server_default="pdf_upload")
+    extraction_status: Mapped[str] = mapped_column(String(30), nullable=False, server_default="uploaded", index=True)
+    page_count: Mapped[int] = mapped_column(Integer, nullable=False, server_default="0")
+    extracted_char_count: Mapped[int] = mapped_column(Integer, nullable=False, server_default="0")
+    extraction_error: Mapped[str | None] = mapped_column(Text, nullable=True)
+    uploaded_by_user_id: Mapped[uuid.UUID | None] = mapped_column(UUID(as_uuid=True), ForeignKey("users.id", ondelete="SET NULL"), nullable=True)
+    processed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, server_default=func.now())
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, server_default=func.now(), onupdate=func.now())
+
+    __table_args__ = (
+        CheckConstraint("source_type IN ('pdf_upload','manual_text')", name="ck_calendar_source_documents_source_type"),
+        CheckConstraint(
+            "extraction_status IN ('uploaded','processing','ocr_required','review_ready','processed','failed','cancelled','committed')",
+            name="ck_calendar_source_documents_extraction_status",
+        ),
+        CheckConstraint("page_count >= 0", name="ck_calendar_source_documents_page_count_non_negative"),
+        CheckConstraint("extracted_char_count >= 0", name="ck_calendar_source_documents_char_count_non_negative"),
+    )
+
+
+class CalendarSourcePage(Base):
+    __tablename__ = "calendar_source_pages"
+
+    id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    tenant_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), ForeignKey("tenants.id", ondelete="CASCADE"), nullable=False, index=True)
+    source_document_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), ForeignKey("calendar_source_documents.id", ondelete="CASCADE"), nullable=False, index=True)
+    page_number: Mapped[int] = mapped_column(Integer, nullable=False)
+    extracted_text: Mapped[str] = mapped_column(Text, nullable=False)
+    text_excerpt: Mapped[str | None] = mapped_column(String(500), nullable=True)
+    extracted_char_count: Mapped[int] = mapped_column(Integer, nullable=False, server_default="0")
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, server_default=func.now())
+
+    __table_args__ = (
+        CheckConstraint("page_number > 0", name="ck_calendar_source_pages_page_number_positive"),
+        CheckConstraint("extracted_char_count >= 0", name="ck_calendar_source_pages_char_count_non_negative"),
+        UniqueConstraint("source_document_id", "page_number", name="uq_calendar_source_pages_document_page"),
+    )
+
+
+class CalendarEventCandidate(Base):
+    __tablename__ = "calendar_event_candidates"
+
+    id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    tenant_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), ForeignKey("tenants.id", ondelete="CASCADE"), nullable=False, index=True)
+    source_document_id: Mapped[uuid.UUID | None] = mapped_column(UUID(as_uuid=True), ForeignKey("calendar_source_documents.id", ondelete="SET NULL"), nullable=True, index=True)
+    source_page_id: Mapped[uuid.UUID | None] = mapped_column(UUID(as_uuid=True), ForeignKey("calendar_source_pages.id", ondelete="SET NULL"), nullable=True, index=True)
+    proposed_event_name: Mapped[str] = mapped_column(String(255), nullable=False)
+    proposed_description: Mapped[str | None] = mapped_column(Text, nullable=True)
+    proposed_start_date: Mapped[date_type | None] = mapped_column(Date, nullable=True)
+    proposed_end_date: Mapped[date_type | None] = mapped_column(Date, nullable=True)
+    proposed_event_type: Mapped[str] = mapped_column(String(50), nullable=False)
+    proposed_teaching_day_effect: Mapped[str] = mapped_column(String(40), nullable=False, server_default="no_change")
+    confidence_score: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    candidate_status: Mapped[str] = mapped_column(String(30), nullable=False, server_default="proposed", index=True)
+    date_parse_status: Mapped[str] = mapped_column(String(30), nullable=False, server_default="missing")
+    uncertainty_note: Mapped[str | None] = mapped_column(String(255), nullable=True)
+    classification_json: Mapped[dict] = mapped_column(JSON, nullable=False, default=dict)
+    validation_issues_json: Mapped[dict] = mapped_column(JSON, nullable=False, default=dict)
+    source_payload: Mapped[dict] = mapped_column(JSON, nullable=False, default=dict)
+    reviewed_by_user_id: Mapped[uuid.UUID | None] = mapped_column(UUID(as_uuid=True), ForeignKey("users.id", ondelete="SET NULL"), nullable=True)
+    reviewed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    approved_by_user_id: Mapped[uuid.UUID | None] = mapped_column(UUID(as_uuid=True), ForeignKey("users.id", ondelete="SET NULL"), nullable=True)
+    approved_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    applied_event_id: Mapped[uuid.UUID | None] = mapped_column(UUID(as_uuid=True), ForeignKey("operational_calendar_events.id", ondelete="SET NULL"), nullable=True, index=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, server_default=func.now())
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, server_default=func.now(), onupdate=func.now())
+
+    __table_args__ = (
+        CheckConstraint(
+            "proposed_end_date IS NULL OR proposed_start_date IS NULL OR proposed_end_date >= proposed_start_date",
+            name="ck_calendar_event_candidates_date_range",
+        ),
+        CheckConstraint(
+            "proposed_event_type IN ('teaching_day_override','public_holiday','school_holiday','examination_period','professional_development','parent_conference','school_event','half_day','special_schedule','term_boundary','information_only')",
+            name="ck_calendar_event_candidates_event_type",
+        ),
+        CheckConstraint(
+            "proposed_teaching_day_effect IN ('no_change','non_teaching_day','teaching_day','special_schedule')",
+            name="ck_calendar_event_candidates_teaching_day_effect",
+        ),
+        CheckConstraint("confidence_score IS NULL OR (confidence_score >= 0 AND confidence_score <= 100)", name="ck_calendar_event_candidates_confidence_score"),
+        CheckConstraint(
+            "candidate_status IN ('proposed','edited','approved','rejected','committed')",
+            name="ck_calendar_event_candidates_status",
+        ),
+        CheckConstraint(
+            "date_parse_status IN ('parsed','ambiguous','hijri_unresolved','invalid_range','missing')",
+            name="ck_calendar_event_candidates_date_parse_status",
+        ),
+    )
+
+
+class CalendarEventVersion(Base):
+    __tablename__ = "calendar_event_versions"
+
+    id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    tenant_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), ForeignKey("tenants.id", ondelete="CASCADE"), nullable=False, index=True)
+    event_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), ForeignKey("operational_calendar_events.id", ondelete="CASCADE"), nullable=False, index=True)
+    version_number: Mapped[int] = mapped_column(Integer, nullable=False)
+    previous_values: Mapped[dict] = mapped_column(JSON, nullable=False, default=dict)
+    new_values: Mapped[dict] = mapped_column(JSON, nullable=False, default=dict)
+    changed_fields: Mapped[list] = mapped_column(JSON, nullable=False, default=list)
+    change_type: Mapped[str] = mapped_column(String(40), nullable=False, index=True)
+    reason: Mapped[str | None] = mapped_column(Text, nullable=True)
+    actor_user_id: Mapped[uuid.UUID | None] = mapped_column(UUID(as_uuid=True), ForeignKey("users.id", ondelete="SET NULL"), nullable=True)
+    approval_actor_user_id: Mapped[uuid.UUID | None] = mapped_column(UUID(as_uuid=True), ForeignKey("users.id", ondelete="SET NULL"), nullable=True)
+    source_type: Mapped[str] = mapped_column(String(40), nullable=False, server_default="manual")
+    affected_stakeholder_summary: Mapped[dict] = mapped_column(JSON, nullable=False, default=dict)
+    notification_plan_id: Mapped[uuid.UUID | None] = mapped_column(UUID(as_uuid=True), ForeignKey("calendar_notification_plans.id", ondelete="SET NULL"), nullable=True, index=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, server_default=func.now(), index=True)
+
+    __table_args__ = (
+        CheckConstraint("version_number > 0", name="ck_calendar_event_versions_version_positive"),
+        CheckConstraint(
+            "change_type IN ('created','edited','submitted','approved','published','rescheduled','scope_changed','location_changed','cancelled','restored','archived')",
+            name="ck_calendar_event_versions_change_type",
+        ),
+        CheckConstraint(
+            "source_type IN ('manual','excel_import','csv_import','pdf_extraction','agent_recommendation','system_generated')",
+            name="ck_calendar_event_versions_source_type",
+        ),
+        UniqueConstraint("event_id", "version_number", "change_type", name="uq_calendar_event_versions_event_version_change"),
+    )
+
+
+class CalendarNotificationPlan(Base):
+    __tablename__ = "calendar_notification_plans"
+
+    id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    tenant_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), ForeignKey("tenants.id", ondelete="CASCADE"), nullable=False, index=True)
+    event_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), ForeignKey("operational_calendar_events.id", ondelete="CASCADE"), nullable=False, index=True)
+    event_version_number: Mapped[int] = mapped_column(Integer, nullable=False)
+    trigger_reason: Mapped[str] = mapped_column(String(40), nullable=False, index=True)
+    audience_scope: Mapped[dict] = mapped_column(JSON, nullable=False, default=dict)
+    affected_count: Mapped[int] = mapped_column(Integer, nullable=False, server_default="0")
+    subject: Mapped[str] = mapped_column(String(255), nullable=False)
+    proposed_message: Mapped[str] = mapped_column(Text, nullable=False)
+    channels: Mapped[list] = mapped_column(JSON, nullable=False, default=list)
+    scheduled_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    reminder_settings: Mapped[dict] = mapped_column(JSON, nullable=False, default=dict)
+    urgency: Mapped[str] = mapped_column(String(30), nullable=False, server_default="normal")
+    approval_required: Mapped[bool] = mapped_column(Boolean, nullable=False, server_default="true")
+    approval_status: Mapped[str] = mapped_column(String(30), nullable=False, server_default="draft", index=True)
+    approved_by_user_id: Mapped[uuid.UUID | None] = mapped_column(UUID(as_uuid=True), ForeignKey("users.id", ondelete="SET NULL"), nullable=True)
+    approved_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    outbox_status: Mapped[str] = mapped_column(String(30), nullable=False, server_default="draft", index=True)
+    delivery_summary: Mapped[dict] = mapped_column(JSON, nullable=False, default=dict)
+    audit_reference_json: Mapped[dict] = mapped_column(JSON, nullable=False, default=dict)
+    related_notification_id: Mapped[uuid.UUID | None] = mapped_column(UUID(as_uuid=True), ForeignKey("notifications.id", ondelete="SET NULL"), nullable=True, index=True)
+    created_by_user_id: Mapped[uuid.UUID | None] = mapped_column(UUID(as_uuid=True), ForeignKey("users.id", ondelete="SET NULL"), nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, server_default=func.now(), index=True)
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, server_default=func.now(), onupdate=func.now())
+
+    __table_args__ = (
+        CheckConstraint("event_version_number > 0", name="ck_calendar_notification_plans_version_positive"),
+        CheckConstraint(
+            "trigger_reason IN ('event_published','reminder','event_updated','event_rescheduled','event_cancelled','urgent_change','weekly_calendar_summary')",
+            name="ck_calendar_notification_plans_trigger_reason",
+        ),
+        CheckConstraint("affected_count >= 0", name="ck_calendar_notification_plans_affected_count_non_negative"),
+        CheckConstraint("urgency IN ('low','normal','high','critical')", name="ck_calendar_notification_plans_urgency"),
+        CheckConstraint(
+            "approval_status IN ('draft','pending_approval','approved','scheduled','ready','dispatched','partially_failed','failed','cancelled')",
+            name="ck_calendar_notification_plans_approval_status",
+        ),
+        CheckConstraint(
+            "outbox_status IN ('draft','pending_approval','approved','scheduled','ready','dispatched','partially_failed','failed','cancelled')",
+            name="ck_calendar_notification_plans_outbox_status",
         ),
     )
 

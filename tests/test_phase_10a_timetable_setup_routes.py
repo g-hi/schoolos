@@ -2,7 +2,6 @@ from __future__ import annotations
 
 import asyncio
 import uuid
-from types import SimpleNamespace
 
 import pytest
 from fastapi import HTTPException
@@ -11,10 +10,40 @@ from fastapi.routing import APIRoute
 from services.gateway.main import app
 from services.gateway.routers import timetable_setup
 from shared.auth.dependencies import require_role
+from shared.db.models import Tenant, User
 
 
 REQUIRED_ROUTE_PATHS = {
     "/leadership/timetable-setup/calendar",
+    "/leadership/timetable-setup/calendar/events",
+    "/leadership/timetable-setup/calendar/events/{event_id}",
+    "/leadership/timetable-setup/calendar/events/{event_id}/submit",
+    "/leadership/timetable-setup/calendar/events/{event_id}/approve",
+    "/leadership/timetable-setup/calendar/events/{event_id}/publish",
+    "/leadership/timetable-setup/calendar/events/{event_id}/reschedule",
+    "/leadership/timetable-setup/calendar/events/{event_id}/cancel",
+    "/leadership/timetable-setup/calendar/events/{event_id}/restore",
+    "/leadership/timetable-setup/calendar/events/{event_id}/archive",
+    "/leadership/timetable-setup/calendar/events/{event_id}/versions",
+    "/leadership/timetable-setup/calendar/events/{event_id}/impact",
+    "/leadership/timetable-setup/calendar/pdf-intake/upload",
+    "/leadership/timetable-setup/calendar/pdf-intake/imports",
+    "/leadership/timetable-setup/calendar/pdf-intake/imports/{document_id}",
+    "/leadership/timetable-setup/calendar/pdf-intake/imports/{document_id}/pages",
+    "/leadership/timetable-setup/calendar/pdf-intake/imports/{document_id}/extract",
+    "/leadership/timetable-setup/calendar/pdf-intake/imports/{document_id}/candidates",
+    "/leadership/timetable-setup/calendar/pdf-intake/candidates/{candidate_id}",
+    "/leadership/timetable-setup/calendar/pdf-intake/candidates/{candidate_id}/approve",
+    "/leadership/timetable-setup/calendar/pdf-intake/candidates/{candidate_id}/reject",
+    "/leadership/timetable-setup/calendar/pdf-intake/imports/{document_id}/validate",
+    "/leadership/timetable-setup/calendar/pdf-intake/imports/{document_id}/commit",
+    "/leadership/timetable-setup/calendar/pdf-intake/imports/{document_id}/cancel",
+    "/leadership/timetable-setup/calendar/pdf-intake/imports/{document_id}/diagnostics",
+    "/leadership/timetable-setup/calendar/notification-plans",
+    "/leadership/timetable-setup/calendar/notification-plans/{plan_id}",
+    "/leadership/timetable-setup/calendar/notification-plans/{plan_id}/approve",
+    "/leadership/timetable-setup/calendar/notification-plans/{plan_id}/cancel",
+    "/leadership/timetable-setup/calendar/events/{event_id}/notification-plan",
     "/leadership/timetable-setup/school-week",
     "/leadership/timetable-setup/bell-schedules",
     "/leadership/timetable-setup/rooms",
@@ -24,8 +53,21 @@ REQUIRED_ROUTE_PATHS = {
 }
 
 
-def _user(*, tenant_id: uuid.UUID, role: str, is_active: bool = True) -> SimpleNamespace:
-    return SimpleNamespace(id=uuid.uuid4(), tenant_id=tenant_id, role=role, is_active=is_active)
+def _user(*, tenant_id: uuid.UUID, role: str, is_active: bool = True) -> User:
+    return User(
+        id=uuid.uuid4(),
+        tenant_id=tenant_id,
+        name="Route Contract User",
+        email=f"{uuid.uuid4()}@example.com",
+        role=role,
+        password_hash="hashed",
+        is_active=is_active,
+    )
+
+
+def _tenant(*, tenant_id: uuid.UUID | None = None) -> Tenant:
+    tid = tenant_id or uuid.uuid4()
+    return Tenant(id=tid, name="Route Contract Tenant", slug=f"tenant-{tid.hex[:8]}", settings={}, is_active=True)
 
 
 def test_route_inventory_and_no_destructive_delete_routes() -> None:
@@ -51,7 +93,7 @@ def test_leadership_role_contract() -> None:
 
 def test_inactive_leadership_rejected() -> None:
     tenant_id = uuid.uuid4()
-    tenant = SimpleNamespace(id=tenant_id)
+    tenant = _tenant(tenant_id=tenant_id)
     actor = _user(tenant_id=tenant_id, role="principal", is_active=False)
     with pytest.raises(HTTPException) as exc:
         timetable_setup._ensure_actor_tenant(actor, tenant)
@@ -59,7 +101,7 @@ def test_inactive_leadership_rejected() -> None:
 
 
 def test_cross_tenant_access_rejected() -> None:
-    tenant = SimpleNamespace(id=uuid.uuid4())
+    tenant = _tenant()
     actor = _user(tenant_id=uuid.uuid4(), role="principal", is_active=True)
     with pytest.raises(HTTPException) as exc:
         timetable_setup._ensure_actor_tenant(actor, tenant)

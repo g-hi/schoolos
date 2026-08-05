@@ -1,4 +1,4 @@
-# Phase 10A Batch 1: Timetable Data Intake Foundation
+# Phase 10A Batches 1-2: Timetable Data Intake Foundation + Workbook Imports
 
 ## AI-Native Policy Alignment
 SchoolOS remains an AI-native operating system with explicit human oversight.
@@ -42,12 +42,118 @@ All are tenant-scoped and non-destructive (deactivation over deletion).
 5. Add operational calendar events.
 6. Review readiness blockers/warnings/information.
 
-## Future Excel Workbook Workflow (Deferred)
-Planned later:
-- SchoolOS workbook templates
-- flexible column mapping
-- multi-sheet ingestion
-- approval of imported candidates before operational use
+## Official Workbook Template
+Leadership can download the official workbook template:
+- GET /leadership/timetable-setup/imports/template
+
+Template sheets:
+- Instructions
+- Teachers
+- Classes
+- Subjects
+- Rooms
+- School Week
+- Periods
+- Teaching Requirements
+- Teacher Availability
+- Fixed Sessions
+- Constraints
+
+Instructions explicitly describe required/optional sheets, accepted formats,
+cross-sheet references, and that upload is preview-only until explicit commit.
+
+## Workbook Upload Safety Controls
+Workbook upload route:
+- POST /leadership/timetable-setup/imports/workbooks
+
+Supported type:
+- .xlsx only
+
+Rejected:
+- .xls
+- .xlsm
+- malformed ZIP/XLSX
+- macro-enabled workbooks (vbaProject.bin)
+- external workbook links
+- empty uploads
+- oversized files
+- excessive sheets/rows/columns
+
+Workbook content is parsed read-only with formula values only.
+No workbook bytes are persisted indefinitely.
+
+## Workbook Lifecycle
+Workbook batches reuse Phase 9D import history structures (`ImportBatch`, `ImportRowResult`) with Batch 2 extensions.
+
+Lifecycle statuses:
+- uploaded
+- parsing
+- mapping_required
+- preview_ready
+- validation_failed
+- validated
+- committed
+- failed
+- cancelled
+
+Commit is blocked unless mapping is resolved, validation passes, and actor/tenant constraints are satisfied.
+
+## Detection, Mapping, Preview
+Additional routes:
+- GET /leadership/timetable-setup/imports/workbooks
+- GET /leadership/timetable-setup/imports/workbooks/{batch_id}
+- GET /leadership/timetable-setup/imports/workbooks/{batch_id}/sheets
+- GET /leadership/timetable-setup/imports/workbooks/{batch_id}/preview
+- PATCH /leadership/timetable-setup/imports/workbooks/{batch_id}/mappings
+
+Behavior:
+- deterministic sheet detection from canonical names/aliases/header similarity
+- explainable column mapping proposals with confidence and reasons
+- required field mapping blockers
+- paginated row previews and diagnostics
+- explicit admin confirmation/overrides for uncertain mappings
+
+## Deterministic Validation
+Validation route:
+- POST /leadership/timetable-setup/imports/workbooks/{batch_id}/validate
+
+Diagnostics route:
+- GET /leadership/timetable-setup/imports/workbooks/{batch_id}/diagnostics
+
+Diagnostics are categorized as:
+- blocker
+- warning
+- information
+
+Validation checks include required-sheet presence, required mapping completeness,
+duplicate identifiers, time validity, period overlap, and reference integrity.
+
+## Controlled Commit
+Commit and cancel routes:
+- POST /leadership/timetable-setup/imports/workbooks/{batch_id}/commit
+- POST /leadership/timetable-setup/imports/workbooks/{batch_id}/cancel
+
+Commit controls:
+- tenant scoped
+- leadership-only
+- transactional
+- idempotent (duplicate commit blocked)
+- audited
+- readiness recomputation after successful commit
+
+Commit summary returns create/update/unchanged/skipped/rejected counts.
+Committed Phase 10A records use provenance `source_type=excel_import`.
+
+## Agent-Compatible Boundaries
+Safe proposal/inspection contracts now include:
+- inspect_workbook
+- propose_sheet_mappings
+- propose_column_mappings
+- explain_workbook_diagnostics
+- validate_workbook
+- summarize_commit_plan
+
+These remain separate from human-controlled mapping confirmation and commit execution.
 
 ## Future PDF Calendar Workflow (Deferred)
 Planned later:
@@ -104,9 +210,10 @@ These are explicitly separate from leadership approval actions.
 All important create/update/approve/reject/deactivate transitions emit audit actions via shared audit helper.
 
 ## Migration
-- Revision: `9a10b1c2d3e4`
-- Down revision: `c4f7a8e2d911`
-- Scope: additive Phase 10A canonical intake schema
+- Batch 1 revision: `9a10b1c2d3e4`
+- Batch 2 revision: `d2f6e7a9b4c1`
+- Batch 2 down revision: `9a10b1c2d3e4`
+- Scope: extends shared import history structures for workbook metadata and diagnostics
 
 ## API Routes
 Prefix: `/leadership/timetable-setup`
@@ -120,19 +227,26 @@ Implemented groups:
 - teaching requirements list/create/update/deactivate
 - readiness summary and detailed checks
 
+Workbook import prefix:
+- `/leadership/timetable-setup/imports/...`
+- template download, upload, list/detail, sheets/preview, mapping patch,
+  validate, commit, cancel, diagnostics
+
 No destructive DELETE routes are added.
 
 ## Focused Test Commands
-Phase 10A:
-- `python -m pytest -q tests/test_phase_10a_calendar_models.py tests/test_phase_10a_bell_schedules.py tests/test_phase_10a_rooms.py tests/test_phase_10a_teaching_requirements.py tests/test_phase_10a_timetable_readiness.py tests/test_phase_10a_timetable_setup_routes.py`
+Batch 2 workbook tests:
+- `python -m pytest -q tests/test_phase_10a_excel_template.py tests/test_phase_10a_excel_upload.py tests/test_phase_10a_excel_mapping.py tests/test_phase_10a_excel_validation.py tests/test_phase_10a_excel_commit.py tests/test_phase_10a_excel_routes.py`
+
+Batch 1 regressions:
+- `python -m pytest -q tests/test_phase_10a_calendar_models.py tests/test_phase_10a_bell_schedules.py tests/test_phase_10a_rooms.py tests/test_phase_10a_teaching_requirements.py tests/test_phase_10a_timetable_readiness.py tests/test_phase_10a_timetable_setup_routes.py tests/test_phase_10a_migration.py`
 
 Relevant regressions:
-- `python -m pytest -q tests/test_phase_9e_onboarding_workflow.py tests/test_phase_9e_readiness_engine.py tests/test_phase_9f_school_setup_e2e.py`
+- `python -m pytest -q tests/test_phase_9d_import_preview_history.py tests/test_phase_9d_import_commit.py`
 
 ## Deferred Work
 This batch does not include:
-- Excel parsing
-- flexible workbook mapping
+- frontend workbook pages
 - PDF extraction
 - timetable generation
 - attendance

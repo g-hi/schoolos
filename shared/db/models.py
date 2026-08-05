@@ -619,15 +619,18 @@ class ImportBatch(Base):
     started_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now(), nullable=False)
     completed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     committed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    import_format: Mapped[str | None] = mapped_column(String(20), nullable=True, index=True)
+    metadata_json: Mapped[dict] = mapped_column(JSON, default=dict)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now(), nullable=False)
     updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now(), nullable=False)
 
     rows: Mapped[list["ImportRowResult"]] = relationship("ImportRowResult", back_populates="batch", cascade="all, delete-orphan")
 
     __table_args__ = (
-        CheckConstraint("entity_type IN ('subjects','classes','teachers','students','parents')", name="ck_import_batches_entity_type"),
-        CheckConstraint("mode IN ('preview','commit')", name="ck_import_batches_mode"),
-        CheckConstraint("status IN ('uploaded','validating','preview_ready','invalid','committing','completed','completed_with_errors','failed','cancelled')", name="ck_import_batches_status"),
+        CheckConstraint("entity_type IN ('subjects','classes','teachers','students','parents','timetable_workbook')", name="ck_import_batches_entity_type"),
+        CheckConstraint("mode IN ('preview','commit','workbook')", name="ck_import_batches_mode"),
+        CheckConstraint("status IN ('uploaded','validating','preview_ready','invalid','committing','completed','completed_with_errors','failed','cancelled','parsing','mapping_required','validation_failed','validated','committed')", name="ck_import_batches_status"),
+        CheckConstraint("import_format IS NULL OR import_format IN ('csv','xlsx')", name="ck_import_batches_format"),
     )
 
 
@@ -647,6 +650,10 @@ class ImportRowResult(Base):
     entity_reference_id: Mapped[uuid.UUID | None] = mapped_column(UUID(as_uuid=True), nullable=True)
     error_code: Mapped[str | None] = mapped_column(String(80), nullable=True)
     error_message: Mapped[str | None] = mapped_column(Text, nullable=True)
+    severity: Mapped[str | None] = mapped_column(String(20), nullable=True, index=True)
+    sheet_name: Mapped[str | None] = mapped_column(String(120), nullable=True, index=True)
+    source_column: Mapped[str | None] = mapped_column(String(120), nullable=True)
+    field_name: Mapped[str | None] = mapped_column(String(120), nullable=True)
     field_errors: Mapped[dict] = mapped_column(JSON, default=dict)
     normalized_data: Mapped[dict] = mapped_column(JSON, default=dict)
     row_data: Mapped[dict] = mapped_column(JSON, default=dict)
@@ -659,6 +666,7 @@ class ImportRowResult(Base):
         CheckConstraint("row_number > 0", name="ck_import_row_results_row_number_positive"),
         CheckConstraint("status IN ('valid','invalid','conflict','created','updated','skipped','failed')", name="ck_import_row_results_status"),
         CheckConstraint("action IN ('create','update','skip','none')", name="ck_import_row_results_action"),
+        CheckConstraint("severity IS NULL OR severity IN ('blocker','warning','information')", name="ck_import_row_results_severity"),
         UniqueConstraint("import_batch_id", "row_number", name="uq_import_row_results_batch_row"),
     )
 

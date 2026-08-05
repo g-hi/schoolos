@@ -57,6 +57,7 @@ from services.gateway.routers.student_enrollments import router as student_enrol
 from services.gateway.routers.imports import router as imports_router
 from services.gateway.routers.onboarding import router as onboarding_router
 from services.gateway.routers.timetable_setup import router as timetable_setup_router
+from services.gateway.routers.timetable_setup_imports import router as timetable_setup_imports_router
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -168,6 +169,7 @@ app.include_router(student_enrollments_router)
 app.include_router(imports_router)
 app.include_router(onboarding_router)
 app.include_router(timetable_setup_router)
+app.include_router(timetable_setup_imports_router)
 
 # =============================================================================
 # ROUTES

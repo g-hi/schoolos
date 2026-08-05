@@ -74,6 +74,13 @@ class Settings(BaseSettings):
     log_level: str = "INFO"
     cors_allowed_origins: str = ""
 
+    # ── Timetable workbook intake safety limits ───────────────────────────
+    timetable_workbook_max_upload_bytes: int = 3 * 1024 * 1024
+    timetable_workbook_max_sheets: int = 20
+    timetable_workbook_max_rows_per_sheet: int = 5000
+    timetable_workbook_max_columns_per_sheet: int = 80
+    timetable_workbook_preview_sample_rows: int = 25
+
 
 @lru_cache
 def get_settings() -> Settings:

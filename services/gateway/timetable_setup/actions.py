@@ -112,3 +112,58 @@ def run_timetable_readiness(*, checked_at: date_type | None = None) -> dict:
         "checked_at": checked_at,
         "note": "Invoke services.gateway.timetable_setup.readiness.compute_timetable_input_readiness with tenant-scoped DB session.",
     }
+
+
+def inspect_workbook(*, batch_id: uuid.UUID) -> dict:
+    return {
+        "action": "inspect_workbook",
+        "batch_id": str(batch_id),
+        "safe": True,
+        "note": "Read-only inspection of workbook summary, sheets, mappings and diagnostics.",
+    }
+
+
+def propose_sheet_mappings(*, batch_id: uuid.UUID) -> dict:
+    return {
+        "action": "propose_sheet_mappings",
+        "batch_id": str(batch_id),
+        "safe": True,
+        "note": "Produce deterministic mapping suggestions only; does not confirm or persist approvals.",
+    }
+
+
+def propose_column_mappings(*, batch_id: uuid.UUID, sheet_name: str) -> dict:
+    return {
+        "action": "propose_column_mappings",
+        "batch_id": str(batch_id),
+        "sheet_name": sheet_name,
+        "safe": True,
+        "note": "Suggest column mappings and confidence metadata only.",
+    }
+
+
+def explain_workbook_diagnostics(*, batch_id: uuid.UUID) -> dict:
+    return {
+        "action": "explain_workbook_diagnostics",
+        "batch_id": str(batch_id),
+        "safe": True,
+        "note": "Summarizes blockers/warnings/information without changing commit state.",
+    }
+
+
+def validate_workbook(*, batch_id: uuid.UUID) -> dict:
+    return {
+        "action": "validate_workbook",
+        "batch_id": str(batch_id),
+        "safe": True,
+        "note": "Runs deterministic validation checks only.",
+    }
+
+
+def summarize_commit_plan(*, batch_id: uuid.UUID) -> dict:
+    return {
+        "action": "summarize_commit_plan",
+        "batch_id": str(batch_id),
+        "safe": True,
+        "note": "Produces expected create/update/unchanged/rejected counts before approval.",
+    }

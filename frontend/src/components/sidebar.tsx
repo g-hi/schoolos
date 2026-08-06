@@ -12,6 +12,7 @@ const parentNotificationsUpdatedEvent = "schoolos:parent-notifications-updated";
 const principalNav = [
   { href: "/", label: "Dashboard", icon: "📊" },
   { href: "/people", label: "People & Families", icon: "👥" },
+  { href: "/leadership/calendar", label: "Academic Calendar", icon: "🗓️" },
   { href: "/reports/review", label: "Weekly Reports", icon: "🗂️" },
   { href: "/appointments", label: "Appointments", icon: "📅" },
   { href: "/timetable", label: "Timetable", icon: "📅" },

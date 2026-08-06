@@ -310,3 +310,81 @@ This batch does not include:
 - substitution
 - duties
 - conversational UI
+
+## Batch 3B Leadership Calendar Workspace
+
+### Frontend Route and Navigation
+- Route: `/leadership/calendar`
+- Leadership sidebar includes **Academic Calendar** navigation.
+- Access remains leadership-only (`principal`, `school_admin`) with explicit guard messaging for unauthorized users.
+
+### Workspace Sections
+- Overview
+- Calendar Events
+- Add Event
+- PDF Imports
+- Review Candidates
+- Notification Plans
+- Change History
+
+### Manual Event User Journey
+1. Leadership opens **Add Event**.
+2. Draft event fields are completed with structured scope.
+3. Save draft calls `POST /leadership/timetable-setup/calendar/events`.
+4. Draft stays non-published; separate lifecycle actions control submit/approve/publish.
+
+### PDF Intake User Journey
+1. Upload text-based PDF through `POST /leadership/timetable-setup/calendar/pdf-intake/upload`.
+2. Review import status, extraction readiness, pages, and diagnostics.
+3. Trigger extraction with `POST /.../extract`.
+4. Validate candidates with `POST /.../validate`.
+5. Commit approved candidates with `POST /.../commit` only when blockers are clear.
+
+### Candidate Review User Journey
+1. Review candidate proposal, source page evidence, confidence, uncertainty, warnings, and blockers.
+2. Edit candidate proposal when needed.
+3. Approve or reject explicitly (separate actions).
+4. Commit remains separate from approve.
+
+### Lifecycle Actions
+- Supported actions: edit draft, submit, approve, publish, reschedule, cancel, restore, archive.
+- UI only surfaces actions valid for current lifecycle state.
+- Reschedule and cancel require reason input.
+
+### Version History Display
+- Immutable versions are shown chronologically from `/events/{event_id}/versions`.
+- Displays change type, changed fields, previous/new values, reason, source type, and notification plan linkage.
+
+### Stakeholder Impact Preview
+- Uses `/events/{event_id}/impact` deterministic payload.
+- Displays affected count, role/grade/class/department breakdowns, unresolved targeting issues, privacy notes, and recommended channels.
+
+### Notification Plan Approval
+- Lists and details from `/calendar/notification-plans` and `/calendar/notification-plans/{plan_id}`.
+- Approval and cancellation actions call explicit endpoints.
+- High-impact plans show warning that authorized human approval is required.
+
+### Agent Suggestions and Human Boundaries
+- UI labels proposals as suggestions and confidence-based interpretations.
+- Source evidence, agent proposal, deterministic validation, human decision, and operational records are visibly separated.
+- No automatic finalization implied by agent-generated data.
+
+### Accessibility and Responsive Behavior
+- Keyboard-accessible tabs and controls.
+- Labeled form fields and alert/status messaging.
+- Mobile-friendly stacked cards and action controls preserved on narrow screens.
+
+### Frontend Tests Added
+- `frontend/src/app/leadership/calendar/__tests__/calendar-page.test.tsx`
+- `frontend/src/app/leadership/calendar/__tests__/manual-event-form.test.tsx`
+- `frontend/src/app/leadership/calendar/__tests__/event-lifecycle.test.tsx`
+- `frontend/src/app/leadership/calendar/__tests__/pdf-import.test.tsx`
+- `frontend/src/app/leadership/calendar/__tests__/candidate-review.test.tsx`
+- `frontend/src/app/leadership/calendar/__tests__/event-impact.test.tsx`
+- `frontend/src/app/leadership/calendar/__tests__/notification-plans.test.tsx`
+- `frontend/src/lib/__tests__/timetable-calendar-api.test.ts`
+
+### Deferred in this Batch
+- External email/SMS/WhatsApp/push delivery execution
+- OCR for scanned PDFs
+- Timetable generation

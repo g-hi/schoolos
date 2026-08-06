@@ -7,8 +7,8 @@ This is injected as a FastAPI dependency:
     tenant: Tenant = Depends(resolve_tenant)
 
 Resolution order (first match wins):
-  1. X-Tenant-Slug header   ← used by internal services and API clients
-  2. Subdomain              ← e.g., greenwood.schoolos.com → slug = 'greenwood'
+    1. X-Tenant-Slug header   ← used by internal services and API clients
+    2. Subdomain              ← e.g., greenwood.schoolos.com → slug = 'greenwood'
 
 Why not use tenant_id (UUID) directly?
   Slugs are human-readable and safe to put in headers without exposing UUIDs.
@@ -78,12 +78,7 @@ def _extract_slug(request: Request) -> str | None:
     if slug:
         return slug.lower().strip()
 
-    # 2. Query parameter (for browser direct links like PDF downloads)
-    slug = request.query_params.get("tenant")
-    if slug:
-        return slug.lower().strip()
-
-    # 3. Subdomain check
+    # 2. Subdomain check
     host = request.headers.get("host", "")
     # Remove port if present: "greenwood.schoolos.com:8000" → "greenwood.schoolos.com"
     host = host.split(":")[0]

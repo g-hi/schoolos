@@ -169,6 +169,121 @@ def summarize_commit_plan(*, batch_id: uuid.UUID) -> dict:
     }
 
 
+def get_setup_centre_summary() -> dict:
+    return {
+        "action": "get_setup_centre_summary",
+        "safe": True,
+        "note": "Read-only unified timetable setup summary.",
+    }
+
+
+def get_setup_steps() -> dict:
+    return {
+        "action": "get_setup_steps",
+        "safe": True,
+        "note": "Read-only step registry and progress overview.",
+    }
+
+
+def get_setup_step_detail(*, step_key: str) -> dict:
+    return {
+        "action": "get_setup_step_detail",
+        "step_key": step_key,
+        "safe": True,
+        "note": "Read-only step details including blockers, counts, and policy rules.",
+    }
+
+
+def get_unified_setup_issues() -> dict:
+    return {
+        "action": "get_unified_setup_issues",
+        "safe": True,
+        "note": "Read-only issue aggregation across timetable setup.",
+    }
+
+
+def get_pending_setup_approvals() -> dict:
+    return {
+        "action": "get_pending_setup_approvals",
+        "safe": True,
+        "note": "Read-only pending approval queue.",
+    }
+
+
+def get_recent_setup_activity() -> dict:
+    return {
+        "action": "get_recent_setup_activity",
+        "safe": True,
+        "note": "Read-only recent activity feed.",
+    }
+
+
+def explain_setup_progress() -> dict:
+    return {
+        "action": "explain_setup_progress",
+        "safe": True,
+        "note": "Explains weighted progress and applicable steps without making decisions.",
+    }
+
+
+def explain_generation_readiness() -> dict:
+    return {
+        "action": "explain_generation_readiness",
+        "safe": True,
+        "note": "Explains why generation is or is not allowed.",
+    }
+
+
+def recommend_next_setup_action() -> dict:
+    return {
+        "action": "recommend_next_setup_action",
+        "safe": True,
+        "note": "Proposes the best next setup step without changing state.",
+    }
+
+
+def propose_issue_resolution_plan(*, issue_key: str) -> dict:
+    return {
+        "action": "propose_issue_resolution_plan",
+        "issue_key": issue_key,
+        "safe": True,
+        "note": "Suggests a deterministic resolution plan only.",
+    }
+
+
+def propose_setup_sequence() -> dict:
+    return {
+        "action": "propose_setup_sequence",
+        "safe": True,
+        "note": "Suggests an ordered setup sequence only.",
+    }
+
+
+def summarize_pending_reviews() -> dict:
+    return {
+        "action": "summarize_pending_reviews",
+        "safe": True,
+        "note": "Summarizes pending reviews without approving anything.",
+    }
+
+
+def summarize_import_status() -> dict:
+    return {
+        "action": "summarize_import_status",
+        "safe": True,
+        "note": "Summarizes workbook and PDF import states without committing.",
+    }
+
+
+def explain_readiness_blocker(*, blocker_key: str) -> dict:
+    return {
+        "action": "explain_readiness_blocker",
+        "blocker_key": blocker_key,
+        "safe": True,
+        "note": "Explains deterministic blocker causes and next action.",
+    }
+
+
 def list_upcoming_events(*, days: int = 14) -> dict:
     return {"action": "list_upcoming_events", "days": days, "safe": True}
 

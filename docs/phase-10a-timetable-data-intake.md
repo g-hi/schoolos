@@ -229,6 +229,46 @@ Service-layer contracts exist for future safe invocation:
 
 These are explicitly separate from leadership approval actions.
 
+## Batch 4A Unified Timetable Setup Centre
+Batch 4A adds the backend-only unified setup centre used by leadership to inspect readiness and pending work across calendar, workbook, PDF, room, schedule, and requirement inputs.
+
+Centre routes:
+- GET /leadership/timetable-setup/centre/summary
+- GET /leadership/timetable-setup/centre/steps
+- GET /leadership/timetable-setup/centre/steps/{step_key}
+- GET /leadership/timetable-setup/centre/issues
+- GET /leadership/timetable-setup/centre/approvals
+- GET /leadership/timetable-setup/centre/activity
+- GET /leadership/timetable-setup/centre/recommendations
+- POST /leadership/timetable-setup/centre/revalidate
+
+Centre behavior:
+- deterministic step registry with weighted progress and applicable/excluded step accounting
+- provenance summaries for source, review, and lifecycle states
+- import summaries for workbook and PDF intake status buckets
+- approval queue aggregation with leadership-only human authorization cues
+- issue aggregation with controlled filters and pagination
+- recent activity filtering with tenant-safe audit summaries
+- revalidate recomputes readiness without mutating canonical state
+
+Agent guidance contracts for Batch 4A remain read/propose only:
+- get_setup_centre_summary
+- get_setup_steps
+- get_setup_step_detail
+- get_unified_setup_issues
+- get_pending_setup_approvals
+- get_recent_setup_activity
+- explain_setup_progress
+- explain_generation_readiness
+- recommend_next_setup_action
+- propose_issue_resolution_plan
+- propose_setup_sequence
+- summarize_pending_reviews
+- summarize_import_status
+- explain_readiness_blocker
+
+Batch 4A does not introduce auto-approval, commit, publish, or timetable generation behavior.
+
 ## Audit Behavior
 All important create/update/approve/reject/deactivate transitions emit audit actions via shared audit helper.
 

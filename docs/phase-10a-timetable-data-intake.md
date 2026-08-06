@@ -392,6 +392,11 @@ Batch 1 regressions:
 Relevant regressions:
 - `python -m pytest -q tests/test_phase_9d_import_preview_history.py tests/test_phase_9d_import_commit.py`
 
+## Local Database Verification Limitation
+- Alembic `heads` and `history` checks are mandatory in release verification.
+- Online upgrade/downgrade rehearsal is optional when PostgreSQL is unavailable locally.
+- A local connection refusal is an environment limitation, not by itself a migration defect.
+
 ## Deferred Work
 This batch does not include:
 - frontend workbook pages

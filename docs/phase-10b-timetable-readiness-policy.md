@@ -239,3 +239,89 @@ New read routes:
 
 Diagnostics are deterministic and use existing policy sets, constraints, exceptions, weekly requirements, rooms, school weeks, and bell schedule periods.
 The setup centre now surfaces additive `policy_diagnostics` data and combines Phase 10A readiness with policy lifecycle readiness and policy diagnostics readiness.
+
+## Phase 10B Batch 3
+Batch 3 adds the deterministic policy readiness engine and the scheduling authorization gate.
+It remains derived-only, read-only, and migration-free.
+
+### Readiness Dimensions
+The readiness engine evaluates these dimensions before scheduling can proceed:
+- canonical Phase 10A input readiness
+- effective policy-set selection and lifecycle readiness
+- effective constraint coverage and precedence resolution
+- diagnostic feasibility readiness
+- approval queue readiness
+- exception validity readiness
+- coverage score and explanation
+
+### Policy Precedence
+Policy selection is deterministic and tenant-scoped.
+Selection prefers:
+- an active, applicable policy over draft, pending, suspended, retired, or expired records
+- the most specific scope over a broader scope when both are applicable
+- the higher version number when scope specificity is equal
+
+Equal-priority contradictions do not silently resolve; they block readiness and are surfaced as blockers.
+
+### Effective Constraints
+The readiness engine computes the effective constraint set for the selected policy only.
+It resolves active constraints deterministically and excludes draft and pending rows.
+Approved exceptions only apply to explicit targets and are ignored when pending, expired, revoked, or duplicate.
+
+### Coverage and Score
+Coverage reports mandatory, optional, and not-applicable checks with a weight-based score breakdown.
+Not-applicable dimensions are excluded from the denominator.
+The score is explanatory, deterministic, and never overrides a blocker.
+
+### Approval and Exception Readiness
+The engine reports pending policy approvals, approved-but-inactive policies, pending constraint approvals, pending exception approvals, expired exceptions, conflicting exceptions, and resolved items.
+The queues are read-only and exist only to explain what still needs leadership action.
+
+### Generation Authorization
+Generation authorization is the logical AND of:
+- canonical input readiness
+- policy lifecycle readiness
+- policy coverage readiness
+- diagnostic feasibility readiness
+- exception readiness
+- approval readiness
+
+Any blocker in one dimension keeps `generation_allowed` false.
+
+### Revalidation
+`POST /leadership/timetable-setup/centre/revalidate` recomputes the derived setup-centre payload only.
+It does not approve, activate, mutate, or generate timetable data.
+
+### API Routes
+Readiness routes under `/leadership/timetable-policies`:
+- `GET /readiness`
+- `GET /readiness/effective-policy`
+- `GET /readiness/effective-constraints`
+- `GET /readiness/authorization`
+
+The existing setup-centre route also exposes the additive `policy_readiness` payload alongside Phase 10A fields and Batch 2 diagnostics.
+
+### Agent Boundaries
+Safe read actions only:
+- inspect policy readiness
+- inspect effective policy
+- inspect effective constraints
+- inspect scheduling authorization
+
+The readiness surface does not authorize approval, activation, or timetable generation.
+
+### Tenant Isolation
+Every readiness and route evaluation remains tenant-scoped.
+Cross-tenant actors are rejected, and cross-tenant policy, constraint, or exception rows are ignored.
+There is no tenant query-parameter override.
+
+### No Migration
+Batch 3 does not add a migration.
+Alembic head remains `a84f2c1d9e30`.
+
+### Deferred Work
+Deferred to later batches:
+- timetable generation
+- solver translation
+- any frontend policy work
+- any persistent readiness cache or approval automation

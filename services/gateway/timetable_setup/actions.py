@@ -217,6 +217,38 @@ def recommend_policy_resolution() -> dict:
     }
 
 
+def inspect_policy_readiness() -> dict:
+    return {
+        "action": "inspect_policy_readiness",
+        "safe": True,
+        "note": "Read-only timetable policy readiness gate summary.",
+    }
+
+
+def inspect_effective_policy() -> dict:
+    return {
+        "action": "inspect_effective_policy",
+        "safe": True,
+        "note": "Read-only effective policy-set resolution for scheduling authorization.",
+    }
+
+
+def inspect_effective_constraints() -> dict:
+    return {
+        "action": "inspect_effective_constraints",
+        "safe": True,
+        "note": "Read-only effective constraint resolution for the selected timetable policy.",
+    }
+
+
+def inspect_scheduling_authorization() -> dict:
+    return {
+        "action": "inspect_scheduling_authorization",
+        "safe": True,
+        "note": "Read-only authorization gate that explains whether scheduling may proceed.",
+    }
+
+
 def get_setup_steps() -> dict:
     return {
         "action": "get_setup_steps",

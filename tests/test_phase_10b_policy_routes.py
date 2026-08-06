@@ -31,6 +31,10 @@ REQUIRED_POLICY_ROUTES = {
     "/leadership/timetable-policies/diagnostics/feasibility": {"get"},
     "/leadership/timetable-policies/diagnostics/impact": {"get"},
     "/leadership/timetable-policies/diagnostics/resolution-guidance": {"get"},
+    "/leadership/timetable-policies/readiness": {"get"},
+    "/leadership/timetable-policies/readiness/effective-policy": {"get"},
+    "/leadership/timetable-policies/readiness/effective-constraints": {"get"},
+    "/leadership/timetable-policies/readiness/authorization": {"get"},
     "/leadership/timetable-policies/constraint-types": {"get"},
     "/leadership/timetable-policies/constraint-types/{constraint_type}": {"get"},
 }

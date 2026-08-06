@@ -14,6 +14,10 @@ def test_proposal_actions_are_safe_and_do_not_authorize_approval_or_activation()
     feasibility_proposal = actions.analyze_policy_feasibility()
     impact_proposal = actions.summarize_policy_impact()
     resolution_proposal = actions.recommend_policy_resolution()
+    readiness_proposal = actions.inspect_policy_readiness()
+    effective_policy_proposal = actions.inspect_effective_policy()
+    effective_constraints_proposal = actions.inspect_effective_constraints()
+    authorization_proposal = actions.inspect_scheduling_authorization()
 
     assert proposal.get("safe") is True
     assert "requires_human_authorization" not in proposal
@@ -26,6 +30,10 @@ def test_proposal_actions_are_safe_and_do_not_authorize_approval_or_activation()
     assert feasibility_proposal.get("safe") is True
     assert impact_proposal.get("safe") is True
     assert resolution_proposal.get("safe") is True
+    assert readiness_proposal.get("safe") is True
+    assert effective_policy_proposal.get("safe") is True
+    assert effective_constraints_proposal.get("safe") is True
+    assert authorization_proposal.get("safe") is True
 
 
 def test_human_authorized_actions_are_explicitly_marked() -> None:

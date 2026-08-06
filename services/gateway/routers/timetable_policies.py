@@ -11,6 +11,7 @@ from sqlalchemy import and_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from services.gateway.ai.audit import log_action
+from services.gateway.timetable_setup.policy_readiness import build_policy_readiness_payload
 from services.gateway.timetable_setup.policy_registry import (
     CONSTRAINT_CATEGORIES,
     ENFORCEMENT_LEVELS,
@@ -478,6 +479,175 @@ async def get_policy_resolution_guidance(
     await set_tenant_context(db, tenant.id)
     payload = await build_policy_diagnostics_payload(db, tenant.id)
     return {"generated_at": payload["generated_at"], "summary": payload["summary"], "resolution_guidance": payload["resolution_guidance"], "generation": payload["generation"]}
+
+
+@router.get("/readiness", summary="Get timetable policy readiness gate")
+async def get_policy_readiness(
+    academic_year_id: uuid.UUID | None = Query(default=None),
+    term_id: uuid.UUID | None = Query(default=None),
+    campus_id: uuid.UUID | None = Query(default=None),
+    grade_id: uuid.UUID | None = Query(default=None),
+    class_id: uuid.UUID | None = Query(default=None),
+    subject_id: uuid.UUID | None = Query(default=None),
+    teacher_id: uuid.UUID | None = Query(default=None),
+    room_id: uuid.UUID | None = Query(default=None),
+    effective_at: datetime | None = Query(default=None),
+    tenant: Tenant = Depends(resolve_tenant),
+    actor: User = Depends(resolve_authenticated_leadership),
+    db: AsyncSession = Depends(get_db),
+):
+    _ensure_actor_tenant(actor, tenant)
+    await set_tenant_context(db, tenant.id)
+    return await build_policy_readiness_payload(
+        db,
+        tenant.id,
+        academic_year_id=academic_year_id,
+        term_id=term_id,
+        campus_id=campus_id,
+        grade_id=grade_id,
+        class_id=class_id,
+        subject_id=subject_id,
+        teacher_id=teacher_id,
+        room_id=room_id,
+        effective_at=effective_at,
+    )
+
+
+@router.get("/readiness/effective-policy", summary="Get the effective timetable policy-set decision")
+async def get_effective_policy(
+    academic_year_id: uuid.UUID | None = Query(default=None),
+    term_id: uuid.UUID | None = Query(default=None),
+    campus_id: uuid.UUID | None = Query(default=None),
+    grade_id: uuid.UUID | None = Query(default=None),
+    class_id: uuid.UUID | None = Query(default=None),
+    subject_id: uuid.UUID | None = Query(default=None),
+    teacher_id: uuid.UUID | None = Query(default=None),
+    room_id: uuid.UUID | None = Query(default=None),
+    effective_at: datetime | None = Query(default=None),
+    tenant: Tenant = Depends(resolve_tenant),
+    actor: User = Depends(resolve_authenticated_leadership),
+    db: AsyncSession = Depends(get_db),
+):
+    _ensure_actor_tenant(actor, tenant)
+    await set_tenant_context(db, tenant.id)
+    payload = await build_policy_readiness_payload(
+        db,
+        tenant.id,
+        academic_year_id=academic_year_id,
+        term_id=term_id,
+        campus_id=campus_id,
+        grade_id=grade_id,
+        class_id=class_id,
+        subject_id=subject_id,
+        teacher_id=teacher_id,
+        room_id=room_id,
+        effective_at=effective_at,
+    )
+    return {
+        "generated_at": payload["generated_at"],
+        "calculation_id": payload["calculation_id"],
+        "readiness_status": payload["readiness_status"],
+        "generation_allowed": payload["generation_allowed"],
+        "policy_set_id": payload["policy_set_id"],
+        "policy_set_status": payload["policy_set_status"],
+        "policy_set_version": payload["policy_set_version"],
+        "policy_explanation": payload["policy_explanation"],
+        "source_and_provenance_summary": payload["source_and_provenance_summary"],
+        "policy_blocker_count": payload["policy_blocker_count"],
+        "policy_warning_count": payload["policy_warning_count"],
+        "policy_pending_approval_count": payload["policy_pending_approval_count"],
+        "policy_readiness_status": payload["policy_readiness_status"],
+        "overall_policy_score": payload["overall_policy_score"],
+        "calculation_breakdown": payload["calculation_breakdown"],
+    }
+
+
+@router.get("/readiness/effective-constraints", summary="Get effective timetable constraints")
+async def get_effective_constraints(
+    academic_year_id: uuid.UUID | None = Query(default=None),
+    term_id: uuid.UUID | None = Query(default=None),
+    campus_id: uuid.UUID | None = Query(default=None),
+    grade_id: uuid.UUID | None = Query(default=None),
+    class_id: uuid.UUID | None = Query(default=None),
+    subject_id: uuid.UUID | None = Query(default=None),
+    teacher_id: uuid.UUID | None = Query(default=None),
+    room_id: uuid.UUID | None = Query(default=None),
+    effective_at: datetime | None = Query(default=None),
+    tenant: Tenant = Depends(resolve_tenant),
+    actor: User = Depends(resolve_authenticated_leadership),
+    db: AsyncSession = Depends(get_db),
+):
+    _ensure_actor_tenant(actor, tenant)
+    await set_tenant_context(db, tenant.id)
+    payload = await build_policy_readiness_payload(
+        db,
+        tenant.id,
+        academic_year_id=academic_year_id,
+        term_id=term_id,
+        campus_id=campus_id,
+        grade_id=grade_id,
+        class_id=class_id,
+        subject_id=subject_id,
+        teacher_id=teacher_id,
+        room_id=room_id,
+        effective_at=effective_at,
+    )
+    return {
+        "generated_at": payload["generated_at"],
+        "policy_set_id": payload["policy_set_id"],
+        "policy_set_status": payload["policy_set_status"],
+        "effective_constraint_count": payload["effective_constraint_count"],
+        "coverage": payload["coverage"],
+        "effective_constraints": payload["effective_constraints"],
+        "exception_readiness": payload["exception_readiness"],
+        "policy_score": payload["policy_score"],
+    }
+
+
+@router.get("/readiness/authorization", summary="Get scheduling authorization gate decision")
+async def get_scheduling_authorization(
+    academic_year_id: uuid.UUID | None = Query(default=None),
+    term_id: uuid.UUID | None = Query(default=None),
+    campus_id: uuid.UUID | None = Query(default=None),
+    grade_id: uuid.UUID | None = Query(default=None),
+    class_id: uuid.UUID | None = Query(default=None),
+    subject_id: uuid.UUID | None = Query(default=None),
+    teacher_id: uuid.UUID | None = Query(default=None),
+    room_id: uuid.UUID | None = Query(default=None),
+    effective_at: datetime | None = Query(default=None),
+    tenant: Tenant = Depends(resolve_tenant),
+    actor: User = Depends(resolve_authenticated_leadership),
+    db: AsyncSession = Depends(get_db),
+):
+    _ensure_actor_tenant(actor, tenant)
+    await set_tenant_context(db, tenant.id)
+    payload = await build_policy_readiness_payload(
+        db,
+        tenant.id,
+        academic_year_id=academic_year_id,
+        term_id=term_id,
+        campus_id=campus_id,
+        grade_id=grade_id,
+        class_id=class_id,
+        subject_id=subject_id,
+        teacher_id=teacher_id,
+        room_id=room_id,
+        effective_at=effective_at,
+    )
+    return {
+        "generated_at": payload["generated_at"],
+        "calculation_id": payload["calculation_id"],
+        "readiness_status": payload["readiness_status"],
+        "generation_allowed": payload["generation_allowed"],
+        "policy_readiness_status": payload["policy_readiness_status"],
+        "policy_blocker_count": payload["policy_blocker_count"],
+        "policy_warning_count": payload["policy_warning_count"],
+        "policy_pending_approval_count": payload["policy_pending_approval_count"],
+        "overall_policy_score": payload["overall_policy_score"],
+        "required_actions": payload["required_actions"],
+        "readiness_blockers": payload["readiness_blockers"],
+        "readiness_warnings": payload["readiness_warnings"],
+    }
 
 
 @router.get("/policy-sets", summary="List timetable policy sets")

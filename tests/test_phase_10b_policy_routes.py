@@ -26,6 +26,11 @@ REQUIRED_POLICY_ROUTES = {
     "/leadership/timetable-policies/exceptions/{exception_id}/approve": {"post"},
     "/leadership/timetable-policies/exceptions/{exception_id}/reject": {"post"},
     "/leadership/timetable-policies/exceptions/{exception_id}/revoke": {"post"},
+    "/leadership/timetable-policies/diagnostics": {"get"},
+    "/leadership/timetable-policies/diagnostics/conflicts": {"get"},
+    "/leadership/timetable-policies/diagnostics/feasibility": {"get"},
+    "/leadership/timetable-policies/diagnostics/impact": {"get"},
+    "/leadership/timetable-policies/diagnostics/resolution-guidance": {"get"},
     "/leadership/timetable-policies/constraint-types": {"get"},
     "/leadership/timetable-policies/constraint-types/{constraint_type}": {"get"},
 }

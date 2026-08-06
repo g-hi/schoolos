@@ -21,6 +21,7 @@ from services.gateway.timetable_setup.policy_registry import (
     list_constraint_types,
     validate_constraint_parameters,
 )
+from services.gateway.timetable_setup.policy_diagnostics import build_policy_diagnostics_payload
 from shared.auth.dependencies import resolve_authenticated_leadership
 from shared.auth.tenant import resolve_tenant
 from shared.db.connection import get_db, set_tenant_context
@@ -418,6 +419,65 @@ async def _append_constraint_version(
 def _assert_transition(current: str, *, allowed: set[str], action: str) -> None:
     if current not in allowed:
         raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail=f"Cannot {action} while lifecycle_status is '{current}'.")
+
+
+@router.get("/diagnostics", summary="Get timetable policy diagnostics")
+async def get_policy_diagnostics(
+    tenant: Tenant = Depends(resolve_tenant),
+    actor: User = Depends(resolve_authenticated_leadership),
+    db: AsyncSession = Depends(get_db),
+):
+    _ensure_actor_tenant(actor, tenant)
+    await set_tenant_context(db, tenant.id)
+    return await build_policy_diagnostics_payload(db, tenant.id)
+
+
+@router.get("/diagnostics/conflicts", summary="List timetable policy conflict diagnostics")
+async def get_policy_conflicts(
+    tenant: Tenant = Depends(resolve_tenant),
+    actor: User = Depends(resolve_authenticated_leadership),
+    db: AsyncSession = Depends(get_db),
+):
+    _ensure_actor_tenant(actor, tenant)
+    await set_tenant_context(db, tenant.id)
+    payload = await build_policy_diagnostics_payload(db, tenant.id)
+    return {"generated_at": payload["generated_at"], "summary": payload["summary"], "conflicts": payload["conflicts"], "generation": payload["generation"]}
+
+
+@router.get("/diagnostics/feasibility", summary="List timetable policy feasibility diagnostics")
+async def get_policy_feasibility(
+    tenant: Tenant = Depends(resolve_tenant),
+    actor: User = Depends(resolve_authenticated_leadership),
+    db: AsyncSession = Depends(get_db),
+):
+    _ensure_actor_tenant(actor, tenant)
+    await set_tenant_context(db, tenant.id)
+    payload = await build_policy_diagnostics_payload(db, tenant.id)
+    return {"generated_at": payload["generated_at"], "summary": payload["summary"], "feasibility": payload["feasibility"], "generation": payload["generation"]}
+
+
+@router.get("/diagnostics/impact", summary="List timetable policy impact analysis")
+async def get_policy_impact(
+    tenant: Tenant = Depends(resolve_tenant),
+    actor: User = Depends(resolve_authenticated_leadership),
+    db: AsyncSession = Depends(get_db),
+):
+    _ensure_actor_tenant(actor, tenant)
+    await set_tenant_context(db, tenant.id)
+    payload = await build_policy_diagnostics_payload(db, tenant.id)
+    return {"generated_at": payload["generated_at"], "summary": payload["summary"], "impact": payload["impact"], "generation": payload["generation"]}
+
+
+@router.get("/diagnostics/resolution-guidance", summary="Get timetable policy resolution guidance")
+async def get_policy_resolution_guidance(
+    tenant: Tenant = Depends(resolve_tenant),
+    actor: User = Depends(resolve_authenticated_leadership),
+    db: AsyncSession = Depends(get_db),
+):
+    _ensure_actor_tenant(actor, tenant)
+    await set_tenant_context(db, tenant.id)
+    payload = await build_policy_diagnostics_payload(db, tenant.id)
+    return {"generated_at": payload["generated_at"], "summary": payload["summary"], "resolution_guidance": payload["resolution_guidance"], "generation": payload["generation"]}
 
 
 @router.get("/policy-sets", summary="List timetable policy sets")

@@ -225,3 +225,17 @@ Deferred to later batches:
 - solver translation/mapping implementation
 - timetable generation
 - substitutions, attendance, duties
+
+## Phase 10B Batch 2
+Batch 2 adds derived-only diagnostics for conflicts, feasibility, impact analysis, and resolution guidance.
+The diagnostics layer is read-only and does not introduce a new migration.
+
+New read routes:
+- `/leadership/timetable-policies/diagnostics`
+- `/leadership/timetable-policies/diagnostics/conflicts`
+- `/leadership/timetable-policies/diagnostics/feasibility`
+- `/leadership/timetable-policies/diagnostics/impact`
+- `/leadership/timetable-policies/diagnostics/resolution-guidance`
+
+Diagnostics are deterministic and use existing policy sets, constraints, exceptions, weekly requirements, rooms, school weeks, and bell schedule periods.
+The setup centre now surfaces additive `policy_diagnostics` data and combines Phase 10A readiness with policy lifecycle readiness and policy diagnostics readiness.

@@ -177,6 +177,46 @@ def get_setup_centre_summary() -> dict:
     }
 
 
+def inspect_policy_diagnostics() -> dict:
+    return {
+        "action": "inspect_policy_diagnostics",
+        "safe": True,
+        "note": "Read-only timetable policy diagnostics summary.",
+    }
+
+
+def explain_policy_conflicts() -> dict:
+    return {
+        "action": "explain_policy_conflicts",
+        "safe": True,
+        "note": "Read-only conflict inspection for active and reviewable timetable policy scopes.",
+    }
+
+
+def analyze_policy_feasibility() -> dict:
+    return {
+        "action": "analyze_policy_feasibility",
+        "safe": True,
+        "note": "Read-only feasibility diagnostics for timetable policies and weekly requirements.",
+    }
+
+
+def summarize_policy_impact() -> dict:
+    return {
+        "action": "summarize_policy_impact",
+        "safe": True,
+        "note": "Read-only impact analysis for timetable policy scopes.",
+    }
+
+
+def recommend_policy_resolution() -> dict:
+    return {
+        "action": "recommend_policy_resolution",
+        "safe": True,
+        "note": "Read-only resolution guidance for timetable policy conflicts and feasibility issues.",
+    }
+
+
 def get_setup_steps() -> dict:
     return {
         "action": "get_setup_steps",

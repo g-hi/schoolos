@@ -9,6 +9,11 @@ def test_proposal_actions_are_safe_and_do_not_authorize_approval_or_activation()
     proposal = actions.propose_constraint(payload={"constraint_type": "teacher_unavailable"})
     policy_proposal = actions.propose_policy_set(payload={"name": "Draft Policy"})
     exception_proposal = actions.propose_exception_request(payload={"reason": "Exam week override"})
+    diagnostics_proposal = actions.inspect_policy_diagnostics()
+    conflict_proposal = actions.explain_policy_conflicts()
+    feasibility_proposal = actions.analyze_policy_feasibility()
+    impact_proposal = actions.summarize_policy_impact()
+    resolution_proposal = actions.recommend_policy_resolution()
 
     assert proposal.get("safe") is True
     assert "requires_human_authorization" not in proposal
@@ -16,6 +21,11 @@ def test_proposal_actions_are_safe_and_do_not_authorize_approval_or_activation()
     assert "requires_human_authorization" not in policy_proposal
     assert exception_proposal.get("safe") is True
     assert "requires_human_authorization" not in exception_proposal
+    assert diagnostics_proposal.get("safe") is True
+    assert conflict_proposal.get("safe") is True
+    assert feasibility_proposal.get("safe") is True
+    assert impact_proposal.get("safe") is True
+    assert resolution_proposal.get("safe") is True
 
 
 def test_human_authorized_actions_are_explicitly_marked() -> None:

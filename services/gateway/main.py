@@ -60,6 +60,7 @@ from services.gateway.routers.timetable_setup import router as timetable_setup_r
 from services.gateway.routers.timetable_setup_imports import router as timetable_setup_imports_router
 from services.gateway.routers.timetable_setup_calendar_intake import router as timetable_setup_calendar_intake_router
 from services.gateway.routers.timetable_setup_centre import router as timetable_setup_centre_router
+from services.gateway.routers.timetable_policies import router as timetable_policies_router
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -174,6 +175,7 @@ app.include_router(timetable_setup_router)
 app.include_router(timetable_setup_imports_router)
 app.include_router(timetable_setup_calendar_intake_router)
 app.include_router(timetable_setup_centre_router)
+app.include_router(timetable_policies_router)
 
 # =============================================================================
 # ROUTES

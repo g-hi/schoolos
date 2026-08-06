@@ -275,6 +275,143 @@ def summarize_import_status() -> dict:
     }
 
 
+def list_policy_sets() -> dict:
+    return {"action": "list_policy_sets", "safe": True, "note": "Read-only policy set listing."}
+
+
+def get_policy_set(*, policy_set_id: uuid.UUID) -> dict:
+    return {"action": "get_policy_set", "policy_set_id": str(policy_set_id), "safe": True}
+
+
+def list_constraints(*, policy_set_id: uuid.UUID) -> dict:
+    return {"action": "list_constraints", "policy_set_id": str(policy_set_id), "safe": True}
+
+
+def get_constraint(*, constraint_id: uuid.UUID) -> dict:
+    return {"action": "get_constraint", "constraint_id": str(constraint_id), "safe": True}
+
+
+def get_constraint_type(*, constraint_type: str) -> dict:
+    return {"action": "get_constraint_type", "constraint_type": constraint_type, "safe": True}
+
+
+def explain_constraint(*, constraint_id: uuid.UUID) -> dict:
+    return {
+        "action": "explain_constraint",
+        "constraint_id": str(constraint_id),
+        "safe": True,
+        "note": "Deterministic explanation only; no lifecycle transitions.",
+    }
+
+
+def summarize_policy_effect(*, policy_set_id: uuid.UUID) -> dict:
+    return {
+        "action": "summarize_policy_effect",
+        "policy_set_id": str(policy_set_id),
+        "safe": True,
+        "note": "Summarizes projected policy effects without activating policies.",
+    }
+
+
+def list_pending_policy_reviews() -> dict:
+    return {
+        "action": "list_pending_policy_reviews",
+        "safe": True,
+        "note": "Read-only pending review queue.",
+    }
+
+
+def list_policy_exceptions() -> dict:
+    return {"action": "list_policy_exceptions", "safe": True}
+
+
+def propose_policy_set(*, payload: dict) -> dict:
+    return {
+        "action": "propose_policy_set",
+        "payload": payload,
+        "safe": True,
+        "note": "Proposal only; does not approve or activate.",
+    }
+
+
+def propose_constraint(*, payload: dict) -> dict:
+    return {
+        "action": "propose_constraint",
+        "payload": payload,
+        "safe": True,
+        "note": "Proposal only; no lifecycle transitions.",
+    }
+
+
+def propose_constraint_priority(*, constraint_id: uuid.UUID, priority: int) -> dict:
+    return {
+        "action": "propose_constraint_priority",
+        "constraint_id": str(constraint_id),
+        "priority": priority,
+        "safe": True,
+        "note": "Priority recommendation only.",
+    }
+
+
+def propose_exception_request(*, payload: dict) -> dict:
+    return {
+        "action": "propose_exception_request",
+        "payload": payload,
+        "safe": True,
+        "note": "Exception request proposal only.",
+    }
+
+
+def explain_policy_tradeoff(*, policy_set_id: uuid.UUID) -> dict:
+    return {
+        "action": "explain_policy_tradeoff",
+        "policy_set_id": str(policy_set_id),
+        "safe": True,
+        "note": "Tradeoff analysis only.",
+    }
+
+
+def identify_missing_constraints(*, policy_set_id: uuid.UUID) -> dict:
+    return {
+        "action": "identify_missing_constraints",
+        "policy_set_id": str(policy_set_id),
+        "safe": True,
+        "note": "Gap analysis only.",
+    }
+
+
+def approve_policy(*, policy_set_id: uuid.UUID) -> dict:
+    return {"action": "approve_policy", "policy_set_id": str(policy_set_id), "requires_human_authorization": True}
+
+
+def activate_policy(*, policy_set_id: uuid.UUID) -> dict:
+    return {"action": "activate_policy", "policy_set_id": str(policy_set_id), "requires_human_authorization": True}
+
+
+def suspend_policy(*, policy_set_id: uuid.UUID) -> dict:
+    return {"action": "suspend_policy", "policy_set_id": str(policy_set_id), "requires_human_authorization": True}
+
+
+def retire_policy(*, policy_set_id: uuid.UUID) -> dict:
+    return {"action": "retire_policy", "policy_set_id": str(policy_set_id), "requires_human_authorization": True}
+
+
+def approve_constraint(*, constraint_id: uuid.UUID) -> dict:
+    return {"action": "approve_constraint", "constraint_id": str(constraint_id), "requires_human_authorization": True}
+
+
+def activate_constraint(*, constraint_id: uuid.UUID) -> dict:
+    return {"action": "activate_constraint", "constraint_id": str(constraint_id), "requires_human_authorization": True}
+
+
+def approve_exception(*, exception_id: uuid.UUID) -> dict:
+    return {"action": "approve_exception", "exception_id": str(exception_id), "requires_human_authorization": True}
+
+
+def revoke_exception(*, exception_id: uuid.UUID) -> dict:
+    return {"action": "revoke_exception", "exception_id": str(exception_id), "requires_human_authorization": True}
+
+
 def explain_readiness_blocker(*, blocker_key: str) -> dict:
     return {
         "action": "explain_readiness_blocker",

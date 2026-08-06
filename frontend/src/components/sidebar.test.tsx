@@ -59,6 +59,7 @@ describe("sidebar route mode", () => {
     expect(screen.getByText("Data Imports").closest("a")).toHaveAttribute("href", "/data");
     expect(screen.getByText("Timetable")).toBeInTheDocument();
     expect(screen.getByText("Academic Calendar").closest("a")).toHaveAttribute("href", "/leadership/calendar");
+    expect(screen.getByText("Timetable Setup").closest("a")).toHaveAttribute("href", "/leadership/timetable-setup");
     expect(screen.getByText("Weekly Reports").closest("a")).toHaveAttribute("href", "/reports/review");
 
     mockedUsePathname.mockReturnValue("/");

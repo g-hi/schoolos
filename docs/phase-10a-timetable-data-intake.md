@@ -269,6 +269,56 @@ Agent guidance contracts for Batch 4A remain read/propose only:
 
 Batch 4A does not introduce auto-approval, commit, publish, or timetable generation behavior.
 
+## Batch 4B Unified Timetable Setup Centre Frontend
+Batch 4B adds the leadership frontend workspace for the unified timetable setup centre.
+
+Frontend route:
+- /leadership/timetable-setup
+
+Navigation:
+- adds a leadership sidebar entry for Timetable Setup
+- preserves the existing Academic Calendar entry
+- remains hidden from teachers, parents, students, inactive users, and unauthorized roles through existing leadership guards
+
+Workspace structure:
+- Overview
+- Setup Steps
+- Issues
+- Approvals
+- Imports
+- Activity
+
+Overview content:
+- overall setup percentage and weighted progress explanation
+- generation readiness status and blocker relationship
+- pending approvals and last calculation time
+- recommended next actions
+- provenance summary and import status summary
+
+Step, issue, approval, import, and activity content:
+- 11 deterministic setup steps are shown in backend order
+- filters and pagination follow backend-supported fields only
+- approval rows stay read-only and link to the controlled workflow route
+- workbook and PDF import summaries distinguish validated from committed state
+- recent activity remains paginated and safe
+
+Revalidation:
+- recalculate-only action
+- no canonical record mutation
+- no import approval, commit, publish, or timetable generation
+
+Accessibility and responsiveness:
+- tabbed workspace with labelled controls
+- readable cards and stacked layouts on narrow screens
+- explicit text labels for progress, blockers, and approval requirements
+
+Frontend tests cover:
+- leadership navigation visibility
+- API auth header and filter encoding
+- summary, tab switching, issue, approval, import, activity, and revalidation rendering
+
+Batch 4B does not add timetable generation.
+
 ## Audit Behavior
 All important create/update/approve/reject/deactivate transitions emit audit actions via shared audit helper.
 

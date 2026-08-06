@@ -74,6 +74,24 @@ class Settings(BaseSettings):
     log_level: str = "INFO"
     cors_allowed_origins: str = ""
 
+    # ── Timetable workbook intake safety limits ───────────────────────────
+    timetable_workbook_max_upload_bytes: int = 3 * 1024 * 1024
+    timetable_workbook_max_sheets: int = 20
+    timetable_workbook_max_rows_per_sheet: int = 5000
+    timetable_workbook_max_columns_per_sheet: int = 80
+    timetable_workbook_preview_sample_rows: int = 25
+
+    # ── Calendar PDF intake and planning safety limits ────────────────────
+    timetable_calendar_pdf_max_upload_bytes: int = 4 * 1024 * 1024
+    timetable_calendar_pdf_max_pages: int = 40
+    timetable_calendar_pdf_max_chars_per_page: int = 5000
+    timetable_calendar_pdf_max_total_chars: int = 60000
+    timetable_calendar_pdf_max_candidates: int = 200
+    timetable_calendar_pdf_source_excerpt_max_length: int = 500
+    timetable_calendar_default_reminder_hours: int = 24
+    timetable_calendar_enable_routine_auto_reminder: bool = True
+    timetable_calendar_enable_ai_assisted_extraction: bool = True
+
 
 @lru_cache
 def get_settings() -> Settings:

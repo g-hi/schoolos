@@ -54,6 +54,8 @@ dependencies = [
     # ── Timetable generation ─────────────────────────────────────────────
     "ortools>=9.10.0",           # Google constraint solver for scheduling
     "fpdf2>=2.7.0",              # PDF generation for printable timetables
+    "openpyxl>=3.1.0",           # secure .xlsx parsing and workbook template generation
+    "pypdf>=4.2.0",              # safe PDF parsing for calendar intake
 ]
 
 [project.optional-dependencies]

@@ -110,6 +110,8 @@ async def get_centre_summary(
         "review_breakdown": payload.get("review_breakdown", {}),
         "import_summaries": payload.get("import_summaries", {"workbook": {}, "pdf": {}}),
         "approval_queue": payload.get("approval_queue", {"items": [], "pending_total": 0, "direct_route": "/leadership/timetable-setup/centre/approvals"}),
+        "policy_diagnostics": payload.get("policy_diagnostics", {"summary": {}, "generation": {}, "conflicts": [], "feasibility": [], "impact": [], "resolution_guidance": [], "policy_counts": {}}),
+        "policy_readiness": payload.get("policy_readiness"),
         "policy": payload.get("policy", {}),
         "counts": {
             "calendar_approved": payload.get("metrics", {}).get("calendar_approved", 0),

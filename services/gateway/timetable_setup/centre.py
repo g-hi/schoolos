@@ -8,6 +8,8 @@ from typing import Any
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from services.gateway.timetable_setup.policy_diagnostics import build_policy_diagnostics_payload
+from services.gateway.timetable_setup.policy_readiness import build_policy_readiness_payload
 from services.gateway.timetable_setup.readiness import compute_timetable_input_readiness
 from shared.db.models import (
     AuditLog,
@@ -530,22 +532,55 @@ def build_issues(readiness: dict[str, Any], metrics: dict[str, Any]) -> list[dic
     return sorted(issues, key=lambda item: (0 if item["severity"] == "blocker" else 1 if item["severity"] == "warning" else 2, item["issue_key"]))
 
 
-def build_generation_readiness(readiness: dict[str, Any], metrics: dict[str, Any], issues: list[dict[str, Any]]) -> dict[str, Any]:
+def build_generation_readiness(
+    readiness: dict[str, Any],
+    metrics: dict[str, Any],
+    issues: list[dict[str, Any]],
+    policy_diagnostics: dict[str, Any] | None = None,
+    policy_readiness: dict[str, Any] | None = None,
+) -> dict[str, Any]:
     blocker_count = int(readiness.get("blocker_count", 0))
     warning_count = int(readiness.get("warning_count", 0))
     information_count = int(readiness.get("information_count", 0))
     pending_approvals = int(metrics.get("pending_approvals_total", 0))
+    policy_blocker_count = 0
+    policy_warning_count = 0
+    policy_information_count = 0
+    policy_pending_approval_count = 0
+    policy_generation_allowed = True
+    policy_readiness_status = "ready"
+    readiness_gate_allowed = True
+    readiness_gate_status = "ready"
+    readiness_gate_blocker_count = 0
+    readiness_gate_warning_count = 0
+    readiness_gate_pending_approval_count = 0
+    readiness_gate_score = None
+    if policy_diagnostics is not None:
+        policy_generation = policy_diagnostics.get("generation", {})
+        policy_blocker_count = int(policy_generation.get("blocker_count", 0))
+        policy_warning_count = int(policy_generation.get("warning_count", 0))
+        policy_information_count = int(policy_generation.get("information_count", 0))
+        policy_pending_approval_count = int(policy_generation.get("pending_approval_count", 0))
+        policy_generation_allowed = bool(policy_generation.get("generation_allowed", True))
+        policy_readiness_status = str(policy_generation.get("readiness_status", "ready"))
+    if policy_readiness is not None:
+        readiness_gate_allowed = bool(policy_readiness.get("generation_allowed", True))
+        readiness_gate_status = str(policy_readiness.get("readiness_status", "ready"))
+        readiness_gate_blocker_count = int(policy_readiness.get("policy_blocker_count", 0))
+        readiness_gate_warning_count = int(policy_readiness.get("policy_warning_count", 0))
+        readiness_gate_pending_approval_count = int(policy_readiness.get("policy_pending_approval_count", 0))
+        readiness_gate_score = policy_readiness.get("overall_policy_score")
 
-    if blocker_count > 0:
+    if blocker_count > 0 or policy_blocker_count > 0 or readiness_gate_blocker_count > 0:
         readiness_status = "blocked"
-    elif pending_approvals > 0:
+    elif pending_approvals > 0 or policy_pending_approval_count > 0 or readiness_gate_pending_approval_count > 0:
         readiness_status = "awaiting_human_approval"
-    elif warning_count > 0:
+    elif warning_count > 0 or policy_warning_count > 0 or readiness_gate_warning_count > 0:
         readiness_status = "conditionally_ready"
     else:
         readiness_status = "ready"
 
-    generation_allowed = blocker_count == 0 and pending_approvals == 0
+    generation_allowed = blocker_count == 0 and pending_approvals == 0 and policy_generation_allowed and readiness_gate_allowed
     required_actions = [
         {
             "issue_key": item["issue_key"],
@@ -566,6 +601,18 @@ def build_generation_readiness(readiness: dict[str, Any], metrics: dict[str, Any
         "warning_count": warning_count,
         "information_count": information_count,
         "pending_approval_count": pending_approvals,
+        "policy_blocker_count": policy_blocker_count,
+        "policy_warning_count": policy_warning_count,
+        "policy_information_count": policy_information_count,
+        "policy_pending_approval_count": policy_pending_approval_count,
+        "policy_readiness_status": policy_readiness_status,
+        "policy_generation_allowed": policy_generation_allowed,
+        "policy_readiness_gate_allowed": readiness_gate_allowed,
+        "policy_readiness_gate_status": readiness_gate_status,
+        "policy_readiness_gate_blocker_count": readiness_gate_blocker_count,
+        "policy_readiness_gate_warning_count": readiness_gate_warning_count,
+        "policy_readiness_gate_pending_approval_count": readiness_gate_pending_approval_count,
+        "policy_readiness_gate_score": readiness_gate_score,
         "conditional_ready": blocker_count == 0 and pending_approvals == 0 and warning_count > 0,
         "required_actions": required_actions,
     }
@@ -1349,9 +1396,11 @@ async def build_setup_centre_payload(db: AsyncSession, tenant_id: uuid.UUID) -> 
     metrics = await collect_centre_metrics(db, tenant_id)
     import_summaries = await collect_import_summaries(db, tenant_id)
     approval_queue = await collect_approval_queue(db, tenant_id)
+    policy_diagnostics = await build_policy_diagnostics_payload(db, tenant_id)
+    policy_readiness = await build_policy_readiness_payload(db, tenant_id)
     steps = build_steps(metrics, readiness)
     issues = build_issues(readiness, metrics)
-    generation = build_generation_readiness(readiness, metrics, issues)
+    generation = build_generation_readiness(readiness, metrics, issues, policy_diagnostics, policy_readiness)
     progress = build_progress(steps)
     recommendations = build_recommendations(issues, steps)
     provenance = {
@@ -1379,6 +1428,17 @@ async def build_setup_centre_payload(db: AsyncSession, tenant_id: uuid.UUID) -> 
         "review_breakdown": provenance["review_breakdown"],
         "import_summaries": import_summaries,
         "approval_queue": approval_queue,
+        "policy_diagnostics": {
+            "generated_at": policy_diagnostics.get("generated_at"),
+            "summary": policy_diagnostics.get("summary", {}),
+            "generation": policy_diagnostics.get("generation", {}),
+            "conflicts": policy_diagnostics.get("conflicts", []),
+            "feasibility": policy_diagnostics.get("feasibility", []),
+            "impact": policy_diagnostics.get("impact", []),
+            "resolution_guidance": policy_diagnostics.get("resolution_guidance", []),
+            "policy_counts": policy_diagnostics.get("policy_counts", {}),
+        },
+        "policy_readiness": policy_readiness,
         "policy": {
             "authorized_roles": LEADERSHIP_ROLES,
             "agent_allowed_actions": AGENT_ALLOWED_ACTIONS,

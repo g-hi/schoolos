@@ -1207,6 +1207,211 @@ class WeeklyTeachingRequirement(Base):
     )
 
 
+class TimetablePolicySet(Base):
+    __tablename__ = "timetable_policy_sets"
+
+    id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    tenant_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), ForeignKey("tenants.id", ondelete="CASCADE"), nullable=False, index=True)
+    academic_year_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), ForeignKey("academic_years.id", ondelete="RESTRICT"), nullable=False, index=True)
+    term_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), ForeignKey("terms.id", ondelete="RESTRICT"), nullable=False, index=True)
+    campus_id: Mapped[uuid.UUID | None] = mapped_column(UUID(as_uuid=True), ForeignKey("campuses.id", ondelete="SET NULL"), nullable=True, index=True)
+    name: Mapped[str] = mapped_column(String(160), nullable=False)
+    description: Mapped[str | None] = mapped_column(Text, nullable=True)
+    lifecycle_status: Mapped[str] = mapped_column(String(30), nullable=False, server_default="draft", index=True)
+    version_number: Mapped[int] = mapped_column(Integer, nullable=False, server_default="1")
+    is_active: Mapped[bool] = mapped_column(Boolean, nullable=False, server_default="false", index=True)
+    effective_start_date: Mapped[date_type | None] = mapped_column(Date, nullable=True)
+    effective_end_date: Mapped[date_type | None] = mapped_column(Date, nullable=True)
+    source_type: Mapped[str] = mapped_column(String(40), nullable=False, server_default="manual")
+    created_by_user_id: Mapped[uuid.UUID | None] = mapped_column(UUID(as_uuid=True), ForeignKey("users.id", ondelete="SET NULL"), nullable=True)
+    approved_by_user_id: Mapped[uuid.UUID | None] = mapped_column(UUID(as_uuid=True), ForeignKey("users.id", ondelete="SET NULL"), nullable=True)
+    approved_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, server_default=func.now())
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, server_default=func.now(), onupdate=func.now())
+
+    __table_args__ = (
+        CheckConstraint(
+            "lifecycle_status IN ('draft','pending_review','approved','active','suspended','retired')",
+            name="ck_timetable_policy_sets_lifecycle_status",
+        ),
+        CheckConstraint("version_number > 0", name="ck_timetable_policy_sets_version_positive"),
+        CheckConstraint(
+            "effective_end_date IS NULL OR effective_start_date IS NULL OR effective_end_date >= effective_start_date",
+            name="ck_timetable_policy_sets_effective_date_range",
+        ),
+        CheckConstraint(
+            "source_type IN ('manual','imported','agent_proposal','system_default','approved_exception')",
+            name="ck_timetable_policy_sets_source_type",
+        ),
+        Index(
+            "uq_timetable_policy_sets_active_scope",
+            "tenant_id",
+            "academic_year_id",
+            "term_id",
+            "campus_id",
+            unique=True,
+            postgresql_where=and_(is_active.is_(True), lifecycle_status == "active"),
+        ),
+    )
+
+
+class TimetablePolicySetVersion(Base):
+    __tablename__ = "timetable_policy_set_versions"
+
+    id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    tenant_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), ForeignKey("tenants.id", ondelete="CASCADE"), nullable=False, index=True)
+    policy_set_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), ForeignKey("timetable_policy_sets.id", ondelete="CASCADE"), nullable=False, index=True)
+    version_number: Mapped[int] = mapped_column(Integer, nullable=False)
+    change_type: Mapped[str] = mapped_column(String(40), nullable=False, index=True)
+    reason: Mapped[str | None] = mapped_column(Text, nullable=True)
+    previous_values: Mapped[dict] = mapped_column(JSON, nullable=False, default=dict)
+    new_values: Mapped[dict] = mapped_column(JSON, nullable=False, default=dict)
+    actor_user_id: Mapped[uuid.UUID | None] = mapped_column(UUID(as_uuid=True), ForeignKey("users.id", ondelete="SET NULL"), nullable=True)
+    approval_actor_user_id: Mapped[uuid.UUID | None] = mapped_column(UUID(as_uuid=True), ForeignKey("users.id", ondelete="SET NULL"), nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, server_default=func.now(), index=True)
+
+    __table_args__ = (
+        CheckConstraint("version_number > 0", name="ck_timetable_policy_set_versions_version_positive"),
+        CheckConstraint(
+            "change_type IN ('created','edited','submitted','approved','activated','suspended','retired')",
+            name="ck_timetable_policy_set_versions_change_type",
+        ),
+        UniqueConstraint("policy_set_id", "version_number", "change_type", name="uq_timetable_policy_set_versions_event_version_change"),
+    )
+
+
+class TimetablePolicyConstraint(Base):
+    __tablename__ = "timetable_policy_constraints"
+
+    id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    tenant_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), ForeignKey("tenants.id", ondelete="CASCADE"), nullable=False, index=True)
+    policy_set_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), ForeignKey("timetable_policy_sets.id", ondelete="CASCADE"), nullable=False, index=True)
+    constraint_type: Mapped[str] = mapped_column(String(80), nullable=False, index=True)
+    category: Mapped[str] = mapped_column(String(40), nullable=False, index=True)
+    enforcement_level: Mapped[str] = mapped_column(String(20), nullable=False, index=True)
+    lifecycle_status: Mapped[str] = mapped_column(String(30), nullable=False, server_default="draft", index=True)
+    scope_type: Mapped[str] = mapped_column(String(30), nullable=False, index=True)
+    scope_reference_id: Mapped[uuid.UUID | None] = mapped_column(UUID(as_uuid=True), nullable=True, index=True)
+    scope_reference_code: Mapped[str | None] = mapped_column(String(120), nullable=True)
+    parameters_json: Mapped[dict] = mapped_column(JSON, nullable=False, default=dict)
+    weight: Mapped[float] = mapped_column(Float, nullable=False, server_default="1")
+    priority: Mapped[int] = mapped_column(Integer, nullable=False, server_default="100")
+    is_active: Mapped[bool] = mapped_column(Boolean, nullable=False, server_default="true", index=True)
+    effective_start_date: Mapped[date_type | None] = mapped_column(Date, nullable=True)
+    effective_end_date: Mapped[date_type | None] = mapped_column(Date, nullable=True)
+    explanation: Mapped[str | None] = mapped_column(Text, nullable=True)
+    source_type: Mapped[str] = mapped_column(String(40), nullable=False, server_default="manual")
+    confidence_score: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    requires_approval: Mapped[bool] = mapped_column(Boolean, nullable=False, server_default="false")
+    version_number: Mapped[int] = mapped_column(Integer, nullable=False, server_default="1")
+    created_by_user_id: Mapped[uuid.UUID | None] = mapped_column(UUID(as_uuid=True), ForeignKey("users.id", ondelete="SET NULL"), nullable=True)
+    approved_by_user_id: Mapped[uuid.UUID | None] = mapped_column(UUID(as_uuid=True), ForeignKey("users.id", ondelete="SET NULL"), nullable=True)
+    approved_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, server_default=func.now())
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, server_default=func.now(), onupdate=func.now())
+
+    __table_args__ = (
+        CheckConstraint(
+            "category IN ('resource','teacher','class','subject','room','time','workload','distribution','curriculum','campus','policy','preference')",
+            name="ck_timetable_policy_constraints_category",
+        ),
+        CheckConstraint(
+            "enforcement_level IN ('hard','soft','preference','advisory')",
+            name="ck_timetable_policy_constraints_enforcement_level",
+        ),
+        CheckConstraint(
+            "lifecycle_status IN ('draft','pending_review','approved','active','suspended','retired')",
+            name="ck_timetable_policy_constraints_lifecycle_status",
+        ),
+        CheckConstraint(
+            "scope_type IN ('whole_school','campus','department','grade','class','subject','teacher','room','period','policy_set')",
+            name="ck_timetable_policy_constraints_scope_type",
+        ),
+        CheckConstraint(
+            "source_type IN ('manual','imported','agent_proposal','system_default','approved_exception')",
+            name="ck_timetable_policy_constraints_source_type",
+        ),
+        CheckConstraint("version_number > 0", name="ck_timetable_policy_constraints_version_positive"),
+        CheckConstraint("weight > 0 AND weight <= 1000", name="ck_timetable_policy_constraints_weight_bounds"),
+        CheckConstraint("priority > 0 AND priority <= 1000", name="ck_timetable_policy_constraints_priority_bounds"),
+        CheckConstraint(
+            "confidence_score IS NULL OR (confidence_score >= 0 AND confidence_score <= 100)",
+            name="ck_timetable_policy_constraints_confidence_score",
+        ),
+        CheckConstraint(
+            "effective_end_date IS NULL OR effective_start_date IS NULL OR effective_end_date >= effective_start_date",
+            name="ck_timetable_policy_constraints_effective_date_range",
+        ),
+    )
+
+
+class TimetablePolicyConstraintVersion(Base):
+    __tablename__ = "timetable_policy_constraint_versions"
+
+    id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    tenant_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), ForeignKey("tenants.id", ondelete="CASCADE"), nullable=False, index=True)
+    constraint_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), ForeignKey("timetable_policy_constraints.id", ondelete="CASCADE"), nullable=False, index=True)
+    version_number: Mapped[int] = mapped_column(Integer, nullable=False)
+    change_type: Mapped[str] = mapped_column(String(40), nullable=False, index=True)
+    reason: Mapped[str | None] = mapped_column(Text, nullable=True)
+    previous_values: Mapped[dict] = mapped_column(JSON, nullable=False, default=dict)
+    new_values: Mapped[dict] = mapped_column(JSON, nullable=False, default=dict)
+    actor_user_id: Mapped[uuid.UUID | None] = mapped_column(UUID(as_uuid=True), ForeignKey("users.id", ondelete="SET NULL"), nullable=True)
+    approval_actor_user_id: Mapped[uuid.UUID | None] = mapped_column(UUID(as_uuid=True), ForeignKey("users.id", ondelete="SET NULL"), nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, server_default=func.now(), index=True)
+
+    __table_args__ = (
+        CheckConstraint("version_number > 0", name="ck_timetable_policy_constraint_versions_version_positive"),
+        CheckConstraint(
+            "change_type IN ('created','edited','submitted','approved','activated','suspended','retired')",
+            name="ck_timetable_policy_constraint_versions_change_type",
+        ),
+        UniqueConstraint("constraint_id", "version_number", "change_type", name="uq_timetable_policy_constraint_versions_event_version_change"),
+    )
+
+
+class TimetablePolicyException(Base):
+    __tablename__ = "timetable_policy_exceptions"
+
+    id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    tenant_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), ForeignKey("tenants.id", ondelete="CASCADE"), nullable=False, index=True)
+    policy_set_id: Mapped[uuid.UUID | None] = mapped_column(UUID(as_uuid=True), ForeignKey("timetable_policy_sets.id", ondelete="SET NULL"), nullable=True, index=True)
+    constraint_id: Mapped[uuid.UUID | None] = mapped_column(UUID(as_uuid=True), ForeignKey("timetable_policy_constraints.id", ondelete="SET NULL"), nullable=True, index=True)
+    scope_type: Mapped[str] = mapped_column(String(30), nullable=False, index=True)
+    scope_reference_id: Mapped[uuid.UUID | None] = mapped_column(UUID(as_uuid=True), nullable=True, index=True)
+    scope_reference_code: Mapped[str | None] = mapped_column(String(120), nullable=True)
+    reason: Mapped[str] = mapped_column(Text, nullable=False)
+    start_date: Mapped[date_type | None] = mapped_column(Date, nullable=True)
+    end_date: Mapped[date_type | None] = mapped_column(Date, nullable=True)
+    approval_state: Mapped[str] = mapped_column(String(30), nullable=False, server_default="draft", index=True)
+    requested_by_user_id: Mapped[uuid.UUID | None] = mapped_column(UUID(as_uuid=True), ForeignKey("users.id", ondelete="SET NULL"), nullable=True)
+    approved_by_user_id: Mapped[uuid.UUID | None] = mapped_column(UUID(as_uuid=True), ForeignKey("users.id", ondelete="SET NULL"), nullable=True)
+    approved_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    expires_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    is_active: Mapped[bool] = mapped_column(Boolean, nullable=False, server_default="true")
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, server_default=func.now(), index=True)
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, server_default=func.now(), onupdate=func.now())
+
+    __table_args__ = (
+        CheckConstraint(
+            "scope_type IN ('whole_school','campus','department','grade','class','subject','teacher','room','period','policy_set')",
+            name="ck_timetable_policy_exceptions_scope_type",
+        ),
+        CheckConstraint(
+            "approval_state IN ('draft','pending_review','approved','rejected','revoked')",
+            name="ck_timetable_policy_exceptions_approval_state",
+        ),
+        CheckConstraint(
+            "end_date IS NULL OR start_date IS NULL OR end_date >= start_date",
+            name="ck_timetable_policy_exceptions_date_range",
+        ),
+        CheckConstraint(
+            "(policy_set_id IS NOT NULL) <> (constraint_id IS NOT NULL)",
+            name="ck_timetable_policy_exceptions_single_target",
+        ),
+    )
+
+
 # ─────────────────────────────────────────────────────────────────────────────
 # AuditLog  (immutable event log)
 # ─────────────────────────────────────────────────────────────────────────────

@@ -16,6 +16,7 @@ from services.gateway.routers.families import (
     update_relationship,
 )
 from shared.auth.dependencies import validate_parent_student_access
+from shared.auth.jwt import get_current_user
 from shared.auth.jwt import create_access_token
 from shared.auth.tenant import resolve_tenant
 from shared.db.connection import get_db
@@ -69,6 +70,7 @@ def test_leadership_family_summary_requires_leadership_role() -> None:
 
     app.dependency_overrides[get_db] = _get_db
     app.dependency_overrides[resolve_tenant] = lambda: tenant
+    app.dependency_overrides.pop(get_current_user, None)
     try:
         with TestClient(app, raise_server_exceptions=False) as client:
             response = client.get("/leadership/families/summary", headers=_auth_headers(teacher, tenant.slug, jwt_role="principal"))

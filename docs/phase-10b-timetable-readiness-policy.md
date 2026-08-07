@@ -325,3 +325,99 @@ Deferred to later batches:
 - solver translation
 - any frontend policy work
 - any persistent readiness cache or approval automation
+
+## Phase 10B Batch 4
+Batch 4 adds the leadership frontend workspace for timetable policy lifecycle, diagnostics, and readiness review.
+
+### Frontend Route And Navigation
+- New leadership route: `/leadership/timetable-policies`
+- Leadership sidebar order now surfaces:
+	- Timetable Setup
+	- Timetable Policies
+	- Academic Calendar
+- Route access remains guarded by existing leadership role checks (`principal`, `school_admin`) and inactive/unauthorized users are blocked.
+
+### Workspace Tabs
+The workspace is split into focused tabs:
+- Overview
+- Policy Sets
+- Constraints
+- Diagnostics
+- Readiness
+- Exceptions
+- Approvals
+- Constraint Library
+
+The active tab is preserved in URL search params (`tab`) without tenant query parameters.
+
+### Policy Lifecycle Workspace
+- Policy set list and lifecycle controls use controlled backend transitions only:
+	- submit
+	- approve
+	- activate
+	- suspend
+	- retire
+- Draft creation and edit workflows remain explicit; no automatic approval or activation is performed.
+- Policy versions are displayed from immutable backend version endpoints.
+
+### Structured Constraint Authoring
+- Constraint library displays deterministic registry metadata:
+	- key/title/category
+	- supported enforcement levels
+	- supported scopes
+	- required/optional parameters
+	- default priority/weight
+	- approval requirement
+- Constraint form fields are generated from registry definitions (no unsupported free-text type authoring).
+- Constraint lifecycle follows controlled backend endpoints only.
+- Hard rule / soft rule / preference labels are text-visible and not color-only.
+
+### Diagnostics And Resolution Guidance
+- Diagnostics panel surfaces summary counts, deterministic issue evidence, and resolution guidance.
+- “Run Policy Diagnostics” triggers deterministic re-evaluation reads only.
+- The UI explicitly states diagnostics do not mutate canonical records, approve policies, or generate timetables.
+
+### Effective Policy, Effective Constraints, And Readiness
+- Readiness panels show:
+	- readiness status
+	- generation_allowed
+	- policy score
+	- blocker/warning/pending-approval counts
+	- effective constraint count
+	- required actions
+- The authorization relationship is shown explicitly as logical AND:
+	- Canonical Input Ready AND Policy Ready AND Diagnostics Ready = Scheduling Authorized
+- The UI explicitly states: “Score does not override blockers.”
+
+### Exceptions And Approval Queue
+- Exception workflows expose controlled lifecycle transitions:
+	- submit
+	- approve
+	- reject
+	- revoke
+- Warnings clarify that exceptions apply only to explicit targets and do not remove unrelated blockers.
+- Approval queue surfaces pending readiness/lifecycle work without bypassing detail-view lifecycle endpoints.
+
+### Agent/Human Boundary Labels
+The workspace messaging keeps boundaries explicit:
+- deterministic evidence is advisory
+- recommendations are not approvals
+- proposals are not operational until approved and activated
+- no timetable generation action is exposed in Phase 10B
+
+### Responsiveness And Accessibility
+- Keyboard-accessible tab navigation and buttons
+- Visible text status labels for lifecycle/severity/enforcement
+- Mobile-friendly stacked cards for policy, constraints, diagnostics, exceptions, and approvals
+
+### Frontend Tests Added
+- Leadership route shell and role-guard coverage for timetable policy workspace page
+- Sidebar navigation coverage for new leadership entry and non-leadership visibility
+- API client contract coverage for auth headers, no tenant query parameter, lifecycle HTTP verbs, filter encoding, error parsing, and AbortSignal forwarding
+
+### Scope And Non-Goals (Unchanged)
+- No solver implementation
+- No timetable generation
+- No live AI provider integration
+- No approval/activation bypass shortcuts
+- No migration addition

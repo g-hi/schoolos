@@ -58,6 +58,7 @@ describe("sidebar route mode", () => {
     expect(screen.getByText("Announcements").closest("a")).toHaveAttribute("href", "/announcements");
     expect(screen.getByText("Data Imports").closest("a")).toHaveAttribute("href", "/data");
     expect(screen.getByText("Timetable")).toBeInTheDocument();
+    expect(screen.getByText("Timetable Policies").closest("a")).toHaveAttribute("href", "/leadership/timetable-policies");
     expect(screen.getByText("Academic Calendar").closest("a")).toHaveAttribute("href", "/leadership/calendar");
     expect(screen.getByText("Timetable Setup").closest("a")).toHaveAttribute("href", "/leadership/timetable-setup");
     expect(screen.getByText("Weekly Reports").closest("a")).toHaveAttribute("href", "/reports/review");
@@ -72,10 +73,12 @@ describe("sidebar route mode", () => {
     mockedUseAuth.mockReturnValue({ user: { role: "teacher" }, logout: vi.fn() });
     rerender(<Sidebar />);
     expect(screen.queryByText("School Setup")).not.toBeInTheDocument();
+    expect(screen.queryByText("Timetable Policies")).not.toBeInTheDocument();
 
     mockedUsePathname.mockReturnValue("/parent");
     mockedUseAuth.mockReturnValue({ user: { role: "parent" }, logout: vi.fn() });
     rerender(<Sidebar />);
     expect(screen.queryByText("School Setup")).not.toBeInTheDocument();
+    expect(screen.queryByText("Timetable Policies")).not.toBeInTheDocument();
   });
 });

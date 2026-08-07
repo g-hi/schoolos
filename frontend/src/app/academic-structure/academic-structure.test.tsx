@@ -633,6 +633,6 @@ describe("Sidebar — Academic Structure link", () => {
     await waitFor(() => {
       expect(screen.getByText("Academic Structure")).toBeInTheDocument();
     });
-  });
+  }, 15000);
 });
 

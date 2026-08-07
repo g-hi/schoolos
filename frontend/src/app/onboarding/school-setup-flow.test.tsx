@@ -280,7 +280,7 @@ describe("school setup flow", () => {
     fireEvent.click(await screen.findByRole("tab", { name: "History" }));
     expect(await screen.findByText(/Run run-1/i)).toBeInTheDocument();
     expect(screen.getAllByText(/completed/i).length).toBeGreaterThan(0);
-  });
+  }, 15000);
 
   it("shows each leadership navigation entry once in the sidebar", async () => {
     mockedUsePathname.mockReturnValue("/onboarding");

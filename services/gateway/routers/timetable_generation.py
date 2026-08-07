@@ -11,6 +11,7 @@ from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from services.gateway.ai.audit import log_action
+from services.gateway.timetable_setup.candidates import CandidateGenerationOptions, generate_timetable_candidates
 from services.gateway.timetable_setup.problem_builder import SchedulingProblemBuildError, build_scheduling_problem, summarize_problem
 from services.gateway.timetable_setup.policy_readiness import build_policy_readiness_payload
 from shared.auth.dependencies import resolve_authenticated_leadership
@@ -190,6 +191,17 @@ class LifecycleReasonRequest(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
     reason: str | None = None
+
+
+class CandidatePreviewRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    candidate_count: int = 3
+    max_solver_time_seconds: float = 8.0
+    candidate_profiles: list[str] = Field(default_factory=lambda: ["configured", "balanced", "preference_focused"])
+    include_comparison: bool = True
+    include_explanation_facts: bool = True
+    response_mode: str = "summary"
 
 
 class TeacherPreferenceCreateRequest(BaseModel):
@@ -2316,5 +2328,136 @@ async def preview_scheduling_problem(
             "solver_started": False,
             "candidate_generated": False,
             "timetable_published": False,
+        },
+    }
+
+
+@router.post("/configurations/{configuration_id}/candidates/preview", summary="Preview transient timetable candidates")
+async def preview_timetable_candidates(
+    configuration_id: uuid.UUID,
+    body: CandidatePreviewRequest,
+    tenant: Tenant = Depends(resolve_tenant),
+    actor: User = Depends(resolve_authenticated_leadership),
+    db: AsyncSession = Depends(get_db),
+):
+    _ensure_actor_tenant(actor, tenant)
+    await set_tenant_context(db, tenant.id)
+
+    config = await db.scalar(
+        select(TimetableGenerationConfiguration).where(
+            TimetableGenerationConfiguration.id == configuration_id,
+            TimetableGenerationConfiguration.tenant_id == tenant.id,
+        )
+    )
+    if config is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Generation configuration not found.")
+
+    config_validation = await _run_generation_validation(db=db, tenant=tenant, config=config)
+
+    try:
+        result = await build_scheduling_problem(db=db, tenant_id=tenant.id, configuration_id=configuration_id)
+    except SchedulingProblemBuildError as exc:
+        raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail=str(exc)) from exc
+
+    summary = summarize_problem(result)
+    summary["configuration_validation"] = config_validation
+    solver_eligible = bool(
+        config_validation.get("is_valid")
+        and config_validation.get("policy_generation_allowed")
+        and result.problem.solver_eligible
+    )
+    summary["solver_eligible"] = solver_eligible
+
+    if not solver_eligible:
+        return {
+            "summary": summary,
+            "candidate_result": {
+                "problem_id": result.problem.problem_id,
+                "problem_fingerprint": result.problem.source_fingerprint,
+                "requested_count": body.candidate_count,
+                "generated_count": 0,
+                "candidates": [],
+                "comparison": None,
+                "attempts": [],
+                "warnings": [
+                    {
+                        "code": "solver_eligibility_blocked",
+                        "message": "Candidate generation is blocked because solver eligibility is false.",
+                    }
+                ],
+                "diagnostics": [
+                    {
+                        "code": "solver_eligibility_blocked",
+                        "message": "Problem is not eligible for solving.",
+                        "severity": "blocker",
+                    }
+                ],
+                "duration_ms": 0,
+                "deterministic": True,
+                "provenance": {
+                    "source": "phase_10c_batch4_transient",
+                    "persistence": "none",
+                    "candidate_published": False,
+                    "timetable_version_created": False,
+                },
+            },
+            "explicit_non_actions": {
+                "solver_started": False,
+                "candidate_generated": False,
+                "candidate_persisted": False,
+                "timetable_version_created": False,
+                "timetable_published": False,
+                "notifications_sent": False,
+            },
+        }
+
+    options = CandidateGenerationOptions(
+        candidate_count=body.candidate_count,
+        max_solver_time_seconds=body.max_solver_time_seconds,
+        deterministic=True,
+        candidate_profiles=tuple(body.candidate_profiles),
+        include_comparison=body.include_comparison,
+        include_explanation_facts=body.include_explanation_facts,
+        response_mode=body.response_mode,
+    ).normalized()
+
+    candidate_result = generate_timetable_candidates(result.problem, options=options)
+
+    payload = candidate_result.to_dict()
+    if options.response_mode == "summary":
+        payload["candidates"] = [
+            {
+                "candidate_id": item.get("candidate_id"),
+                "candidate_profile": item.get("candidate_profile"),
+                "feasible": item.get("feasible"),
+                "optimal": item.get("optimal"),
+                "solver_status": item.get("solver_status"),
+                "quality_score": item.get("quality_score"),
+                "quality_band": item.get("quality_band"),
+                "solver_runtime_ms": item.get("solver_runtime_ms"),
+                "assignment_fingerprint": item.get("assignment_fingerprint"),
+                "preference_summary": item.get("preference_summary"),
+                "fairness_summary": item.get("fairness_summary"),
+                "workload_summary": item.get("workload_summary"),
+                "gap_summary": item.get("gap_summary"),
+                "subject_distribution_summary": item.get("subject_distribution_summary"),
+                "room_summary": item.get("room_summary"),
+                "repair_impact_summary": item.get("repair_impact_summary"),
+                "diagnostics": item.get("diagnostics"),
+                "warnings": item.get("warnings"),
+            }
+            for item in payload.get("candidates", [])
+        ]
+
+    return {
+        "summary": summary,
+        "candidate_result": payload,
+        "explicit_non_actions": {
+            "solver_started": False,
+            "candidate_generated": bool(candidate_result.generated_count > 0),
+            "candidate_persisted": False,
+            "timetable_version_created": False,
+            "timetable_published": False,
+            "notifications_sent": False,
         },
     }

@@ -258,6 +258,71 @@ The normalized contract includes:
 - school week + logical periods + bell schedule reference
 - normalized entities (teachers, classes, subjects, rooms)
 - teaching requirements, fixed sessions, policy constraints, preferences, overrides, locks
+
+## Phase 10C Batch 4: Transient Candidate Generation, Scoring, and Explainability
+
+### Purpose
+Batch 4 adds a non-persistent candidate layer on top of Batch 2 + Batch 3:
+- normalized `SchedulingProblem`
+- deterministic CP-SAT solve attempts with bounded profile variants
+- transient candidate scoring/comparison/explainability payloads
+
+Batch 4 is explicitly preview-only and does not change canonical timetable state.
+
+### Scope Added
+- Candidate preview orchestration in memory only.
+- Deterministic candidate identity from assignment fingerprint.
+- Candidate profile strategy (`configured`, `balanced`, `preference_focused`, `compactness_focused`, `stability_focused`, `distribution_focused`).
+- Candidate deduplication by normalized assignment fingerprint.
+- Candidate quality components derived from solver objective components.
+- Pairwise candidate comparison with assignment deltas and metric deltas.
+- Explainability facts from diagnostics and objective component outcomes.
+
+### API Surface Added
+Leadership preview endpoint:
+- `POST /leadership/timetable-generation/configurations/{configuration_id}/candidates/preview`
+
+Input controls include:
+- candidate count
+- max solver time
+- candidate profiles
+- comparison toggle
+- explainability facts toggle
+- response mode (`summary` or `detailed`)
+
+Response includes:
+- scheduling problem summary and solver eligibility gate
+- transient candidate result bundle
+- explicit non-actions contract proving no persistence/publication side effects
+
+### Explicit Non-Actions (Batch 4)
+Batch 4 does not do any of the following:
+- persist candidate rows to database
+- create timetable version rows
+- approve or publish a timetable
+- send notifications
+- invoke external AI providers for solving
+- run student-level scheduling
+
+### Explainability Contract
+Each candidate provides:
+- quality components with key/priority/score/max-score/evidence
+- objective-derived explanation facts
+- diagnostic-derived explanation facts
+- summary dimensions (preferences, fairness, workload, teacher gaps, subject distribution, rooms, repair impact)
+
+### Determinism Contract
+For equivalent problem fingerprint and options:
+- normalized assignment ordering is stable
+- assignment fingerprint is stable
+- candidate identifier is stable
+
+### Phase 10C-5 Deferral
+Deferred to later phase (Phase 10C-5 and beyond):
+- candidate persistence and review workflow state machine
+- timetable version persistence and canonical publication
+- rollout/notification orchestration
+- operational approval workflows beyond preview
 - parallel lesson blocks and children
 - repair scope and baseline summary
 - objective priorities

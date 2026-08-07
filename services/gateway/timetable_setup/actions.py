@@ -740,6 +740,52 @@ def start_solver_generation(*, configuration_id: uuid.UUID) -> dict:
     }
 
 
+def inspect_timetable_candidates_preview(*, configuration_id: uuid.UUID) -> dict:
+    return {
+        "action": "inspect_timetable_candidates_preview",
+        "configuration_id": str(configuration_id),
+        "safe": True,
+        "note": "Read-only transient candidate generation and comparison preview.",
+    }
+
+
+def explain_candidate_tradeoffs(*, configuration_id: uuid.UUID) -> dict:
+    return {
+        "action": "explain_candidate_tradeoffs",
+        "configuration_id": str(configuration_id),
+        "safe": True,
+        "note": "Read-only explainability summary for candidate score trade-offs.",
+    }
+
+
+def compare_timetable_candidates(*, configuration_id: uuid.UUID) -> dict:
+    return {
+        "action": "compare_timetable_candidates",
+        "configuration_id": str(configuration_id),
+        "safe": True,
+        "note": "Read-only pairwise comparison of transient candidates.",
+    }
+
+
+def propose_candidate_generation_options(*, configuration_id: uuid.UUID, payload: dict) -> dict:
+    return {
+        "action": "propose_candidate_generation_options",
+        "configuration_id": str(configuration_id),
+        "payload": payload,
+        "safe": True,
+        "note": "Proposal only; no candidate persistence or publication.",
+    }
+
+
+def approve_candidate_selection(*, candidate_id: uuid.UUID) -> dict:
+    return {
+        "action": "approve_candidate_selection",
+        "candidate_id": str(candidate_id),
+        "requires_human_authorization": True,
+        "note": "Human-only decision marker; does not persist timetable in Batch 4.",
+    }
+
+
 def approve_timetable_candidate(*, candidate_id: uuid.UUID) -> dict:
     return {
         "action": "approve_timetable_candidate",

@@ -34,6 +34,7 @@ REQUIRED_GENERATION_ROUTES = {
     "/leadership/timetable-generation/parallel-blocks/{block_id}": {"get", "patch"},
     "/leadership/timetable-generation/parallel-blocks/{block_id}/deactivate": {"post"},
     "/leadership/timetable-generation/configurations/{configuration_id}/summary": {"get"},
+    "/leadership/timetable-generation/configurations/{configuration_id}/candidates/preview": {"post"},
 }
 
 

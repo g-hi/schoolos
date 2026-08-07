@@ -8,12 +8,13 @@ from alembic.script import ScriptDirectory
 
 REVISION_ID = "a84f2c1d9e30"
 DOWN_REVISION = "f91c2d7a6b55"
+CURRENT_HEAD = "c3d9a7b2e410"
 
 
 def test_phase_10b_revision_head_and_down_revision() -> None:
     script = ScriptDirectory.from_config(Config("alembic.ini"))
     heads = script.get_heads()
-    assert heads == [REVISION_ID]
+    assert heads == [CURRENT_HEAD]
 
     revision = script.get_revision(REVISION_ID)
     assert revision is not None

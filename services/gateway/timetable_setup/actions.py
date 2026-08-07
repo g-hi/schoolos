@@ -484,6 +484,166 @@ def revoke_exception(*, exception_id: uuid.UUID) -> dict:
     return {"action": "revoke_exception", "exception_id": str(exception_id), "requires_human_authorization": True}
 
 
+def inspect_generation_configuration(*, configuration_id: uuid.UUID) -> dict:
+    return {"action": "inspect_generation_configuration", "configuration_id": str(configuration_id), "safe": True}
+
+
+def summarize_generation_controls(*, configuration_id: uuid.UUID) -> dict:
+    return {
+        "action": "summarize_generation_controls",
+        "configuration_id": str(configuration_id),
+        "safe": True,
+        "note": "Read-only summary of generation controls and readiness.",
+    }
+
+
+def list_teacher_scheduling_preferences() -> dict:
+    return {"action": "list_teacher_scheduling_preferences", "safe": True}
+
+
+def explain_teacher_preference_strength(*, strength: str) -> dict:
+    return {
+        "action": "explain_teacher_preference_strength",
+        "strength": strength,
+        "safe": True,
+    }
+
+
+def list_timetable_locks(*, configuration_id: uuid.UUID) -> dict:
+    return {"action": "list_timetable_locks", "configuration_id": str(configuration_id), "safe": True}
+
+
+def explain_repair_scope(*, configuration_id: uuid.UUID) -> dict:
+    return {
+        "action": "explain_repair_scope",
+        "configuration_id": str(configuration_id),
+        "safe": True,
+    }
+
+
+def list_parallel_lesson_blocks() -> dict:
+    return {"action": "list_parallel_lesson_blocks", "safe": True}
+
+
+def explain_parallel_block(*, block_id: uuid.UUID) -> dict:
+    return {"action": "explain_parallel_block", "block_id": str(block_id), "safe": True}
+
+
+def explain_bell_schedule_effect(*, bell_schedule_id: uuid.UUID) -> dict:
+    return {
+        "action": "explain_bell_schedule_effect",
+        "bell_schedule_id": str(bell_schedule_id),
+        "safe": True,
+        "note": "Explains logical-period vs clock-time impact without mutating timetable assignments.",
+    }
+
+
+def propose_teacher_scheduling_preference(*, payload: dict) -> dict:
+    return {
+        "action": "propose_teacher_scheduling_preference",
+        "payload": payload,
+        "safe": True,
+        "note": "Proposal only; no automatic approval.",
+    }
+
+
+def propose_generation_override(*, payload: dict) -> dict:
+    return {
+        "action": "propose_generation_override",
+        "payload": payload,
+        "safe": True,
+        "note": "Proposal only; no permanent policy mutation.",
+    }
+
+
+def propose_lock_scope(*, payload: dict) -> dict:
+    return {
+        "action": "propose_lock_scope",
+        "payload": payload,
+        "safe": True,
+    }
+
+
+def propose_repair_scope(*, payload: dict) -> dict:
+    return {
+        "action": "propose_repair_scope",
+        "payload": payload,
+        "safe": True,
+    }
+
+
+def propose_stability_mode(*, stability_mode: str) -> dict:
+    return {
+        "action": "propose_stability_mode",
+        "stability_mode": stability_mode,
+        "safe": True,
+    }
+
+
+def propose_generation_objective_priorities(*, priorities: list[dict]) -> dict:
+    return {
+        "action": "propose_generation_objective_priorities",
+        "priorities": priorities,
+        "safe": True,
+    }
+
+
+def propose_parallel_block_configuration(*, payload: dict) -> dict:
+    return {
+        "action": "propose_parallel_block_configuration",
+        "payload": payload,
+        "safe": True,
+    }
+
+
+def approve_generation_configuration(*, configuration_id: uuid.UUID) -> dict:
+    return {
+        "action": "approve_generation_configuration",
+        "configuration_id": str(configuration_id),
+        "requires_human_authorization": True,
+    }
+
+
+def approve_permanent_policy_change(*, policy_set_id: uuid.UUID) -> dict:
+    return {
+        "action": "approve_permanent_policy_change",
+        "policy_set_id": str(policy_set_id),
+        "requires_human_authorization": True,
+    }
+
+
+def remove_principal_hard_lock(*, lock_id: uuid.UUID) -> dict:
+    return {
+        "action": "remove_principal_hard_lock",
+        "lock_id": str(lock_id),
+        "requires_human_authorization": True,
+    }
+
+
+def start_solver_generation(*, configuration_id: uuid.UUID) -> dict:
+    return {
+        "action": "start_solver_generation",
+        "configuration_id": str(configuration_id),
+        "requires_human_authorization": True,
+    }
+
+
+def approve_timetable_candidate(*, candidate_id: uuid.UUID) -> dict:
+    return {
+        "action": "approve_timetable_candidate",
+        "candidate_id": str(candidate_id),
+        "requires_human_authorization": True,
+    }
+
+
+def publish_timetable(*, timetable_version_id: uuid.UUID) -> dict:
+    return {
+        "action": "publish_timetable",
+        "timetable_version_id": str(timetable_version_id),
+        "requires_human_authorization": True,
+    }
+
+
 def explain_readiness_blocker(*, blocker_key: str) -> dict:
     return {
         "action": "explain_readiness_blocker",

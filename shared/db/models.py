@@ -1412,6 +1412,290 @@ class TimetablePolicyException(Base):
     )
 
 
+class TimetableGenerationConfiguration(Base):
+    __tablename__ = "timetable_generation_configurations"
+
+    id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    tenant_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), ForeignKey("tenants.id", ondelete="CASCADE"), nullable=False, index=True)
+    academic_year_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), ForeignKey("academic_years.id", ondelete="RESTRICT"), nullable=False, index=True)
+    term_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), ForeignKey("terms.id", ondelete="RESTRICT"), nullable=False, index=True)
+    campus_id: Mapped[uuid.UUID | None] = mapped_column(UUID(as_uuid=True), ForeignKey("campuses.id", ondelete="SET NULL"), nullable=True, index=True)
+    bell_schedule_id: Mapped[uuid.UUID | None] = mapped_column(UUID(as_uuid=True), ForeignKey("bell_schedules.id", ondelete="SET NULL"), nullable=True, index=True)
+    name: Mapped[str] = mapped_column(String(160), nullable=False)
+    description: Mapped[str | None] = mapped_column(Text, nullable=True)
+    generation_mode: Mapped[str] = mapped_column(String(30), nullable=False, server_default="standard", index=True)
+    stability_mode: Mapped[str] = mapped_column(String(20), nullable=False, server_default="balanced")
+    lifecycle_status: Mapped[str] = mapped_column(String(30), nullable=False, server_default="draft", index=True)
+    baseline_reference_type: Mapped[str | None] = mapped_column(String(40), nullable=True)
+    baseline_reference_id: Mapped[uuid.UUID | None] = mapped_column(UUID(as_uuid=True), nullable=True, index=True)
+    effective_start_date: Mapped[date_type | None] = mapped_column(Date, nullable=True)
+    effective_end_date: Mapped[date_type | None] = mapped_column(Date, nullable=True)
+    objective_priorities_json: Mapped[dict] = mapped_column(JSON, nullable=False, default=dict)
+    repair_scope_json: Mapped[dict] = mapped_column(JSON, nullable=False, default=dict)
+    effective_context_json: Mapped[dict] = mapped_column(JSON, nullable=False, default=dict)
+    validation_summary_json: Mapped[dict] = mapped_column(JSON, nullable=False, default=dict)
+    source_type: Mapped[str] = mapped_column(String(40), nullable=False, server_default="manual")
+    created_by_user_id: Mapped[uuid.UUID | None] = mapped_column(UUID(as_uuid=True), ForeignKey("users.id", ondelete="SET NULL"), nullable=True)
+    reviewed_by_user_id: Mapped[uuid.UUID | None] = mapped_column(UUID(as_uuid=True), ForeignKey("users.id", ondelete="SET NULL"), nullable=True)
+    approved_by_user_id: Mapped[uuid.UUID | None] = mapped_column(UUID(as_uuid=True), ForeignKey("users.id", ondelete="SET NULL"), nullable=True)
+    reviewed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    approved_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    superseded_by_configuration_id: Mapped[uuid.UUID | None] = mapped_column(UUID(as_uuid=True), ForeignKey("timetable_generation_configurations.id", ondelete="SET NULL"), nullable=True)
+    cancellation_reason: Mapped[str | None] = mapped_column(Text, nullable=True)
+    version_number: Mapped[int] = mapped_column(Integer, nullable=False, server_default="1")
+    is_active: Mapped[bool] = mapped_column(Boolean, nullable=False, server_default="true")
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, server_default=func.now())
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, server_default=func.now(), onupdate=func.now())
+
+    __table_args__ = (
+        CheckConstraint(
+            "generation_mode IN ('standard','customized','repair')",
+            name="ck_timetable_generation_configurations_mode",
+        ),
+        CheckConstraint(
+            "stability_mode IN ('very_high','high','balanced','flexible')",
+            name="ck_timetable_generation_configurations_stability_mode",
+        ),
+        CheckConstraint(
+            "lifecycle_status IN ('draft','ready_for_review','approved','superseded','cancelled')",
+            name="ck_timetable_generation_configurations_lifecycle_status",
+        ),
+        CheckConstraint(
+            "source_type IN ('manual','imported','agent_proposal','system_generated')",
+            name="ck_timetable_generation_configurations_source_type",
+        ),
+        CheckConstraint(
+            "effective_end_date IS NULL OR effective_start_date IS NULL OR effective_end_date >= effective_start_date",
+            name="ck_timetable_generation_configurations_effective_date_range",
+        ),
+        CheckConstraint("version_number > 0", name="ck_timetable_generation_configurations_version_positive"),
+        CheckConstraint(
+            "generation_mode <> 'repair' OR baseline_reference_id IS NOT NULL",
+            name="ck_timetable_generation_configurations_repair_baseline_required",
+        ),
+        Index(
+            "ix_timetable_generation_configurations_scope_status",
+            "tenant_id",
+            "academic_year_id",
+            "term_id",
+            "campus_id",
+            "lifecycle_status",
+        ),
+    )
+
+
+class TimetableGenerationObjective(Base):
+    __tablename__ = "timetable_generation_objectives"
+
+    id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    tenant_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), ForeignKey("tenants.id", ondelete="CASCADE"), nullable=False, index=True)
+    configuration_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), ForeignKey("timetable_generation_configurations.id", ondelete="CASCADE"), nullable=False, index=True)
+    objective_key: Mapped[str] = mapped_column(String(60), nullable=False)
+    priority_level: Mapped[str] = mapped_column(String(20), nullable=False)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, server_default=func.now())
+
+    __table_args__ = (
+        CheckConstraint(
+            "objective_key IN ('satisfy_hard_constraints','teacher_preferences','workload_balance','subject_distribution','minimize_teacher_gaps','minimize_room_changes','minimize_timetable_disruption','preference_fairness','preserve_existing_assignments')",
+            name="ck_timetable_generation_objectives_key",
+        ),
+        CheckConstraint(
+            "priority_level IN ('critical','high','normal','low')",
+            name="ck_timetable_generation_objectives_priority",
+        ),
+        UniqueConstraint("configuration_id", "objective_key", name="uq_timetable_generation_objectives_configuration_key"),
+    )
+
+
+class TimetableTeacherSchedulingPreference(Base):
+    __tablename__ = "timetable_teacher_scheduling_preferences"
+
+    id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    tenant_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), ForeignKey("tenants.id", ondelete="CASCADE"), nullable=False, index=True)
+    teacher_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), ForeignKey("teachers.id", ondelete="RESTRICT"), nullable=False, index=True)
+    academic_year_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), ForeignKey("academic_years.id", ondelete="RESTRICT"), nullable=False, index=True)
+    term_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), ForeignKey("terms.id", ondelete="RESTRICT"), nullable=False, index=True)
+    campus_id: Mapped[uuid.UUID | None] = mapped_column(UUID(as_uuid=True), ForeignKey("campuses.id", ondelete="SET NULL"), nullable=True, index=True)
+    preference_type: Mapped[str] = mapped_column(String(40), nullable=False, index=True)
+    strength: Mapped[str] = mapped_column(String(20), nullable=False, server_default="normal", index=True)
+    weekdays_json: Mapped[list] = mapped_column(JSON, nullable=False, default=list)
+    period_numbers_json: Mapped[list] = mapped_column(JSON, nullable=False, default=list)
+    effective_start_date: Mapped[date_type | None] = mapped_column(Date, nullable=True)
+    effective_end_date: Mapped[date_type | None] = mapped_column(Date, nullable=True)
+    temporary_accommodation_text: Mapped[str | None] = mapped_column(Text, nullable=True)
+    leadership_note: Mapped[str | None] = mapped_column(Text, nullable=True)
+    source_type: Mapped[str] = mapped_column(String(40), nullable=False, server_default="manual")
+    provenance_json: Mapped[dict] = mapped_column(JSON, nullable=False, default=dict)
+    created_by_user_id: Mapped[uuid.UUID | None] = mapped_column(UUID(as_uuid=True), ForeignKey("users.id", ondelete="SET NULL"), nullable=True)
+    is_active: Mapped[bool] = mapped_column(Boolean, nullable=False, server_default="true", index=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, server_default=func.now())
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, server_default=func.now(), onupdate=func.now())
+
+    __table_args__ = (
+        CheckConstraint(
+            "preference_type IN ('avoid_first_period','avoid_last_period','avoid_selected_periods','prefer_selected_periods','unavailable_selected_periods','prefer_grouped_free_periods','prefer_selected_days','avoid_selected_days','temporary_accommodation')",
+            name="ck_timetable_teacher_preferences_type",
+        ),
+        CheckConstraint(
+            "strength IN ('hard','strong','normal','low')",
+            name="ck_timetable_teacher_preferences_strength",
+        ),
+        CheckConstraint(
+            "source_type IN ('manual','imported','agent_proposal','system_generated')",
+            name="ck_timetable_teacher_preferences_source_type",
+        ),
+        CheckConstraint(
+            "effective_end_date IS NULL OR effective_start_date IS NULL OR effective_end_date >= effective_start_date",
+            name="ck_timetable_teacher_preferences_effective_date_range",
+        ),
+    )
+
+
+class TimetableGenerationOverride(Base):
+    __tablename__ = "timetable_generation_overrides"
+
+    id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    tenant_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), ForeignKey("tenants.id", ondelete="CASCADE"), nullable=False, index=True)
+    configuration_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), ForeignKey("timetable_generation_configurations.id", ondelete="CASCADE"), nullable=False, index=True)
+    override_type: Mapped[str] = mapped_column(String(40), nullable=False, index=True)
+    strength: Mapped[str] = mapped_column(String(20), nullable=False, server_default="normal", index=True)
+    scope_type: Mapped[str] = mapped_column(String(30), nullable=False, index=True)
+    scope_reference_id: Mapped[uuid.UUID | None] = mapped_column(UUID(as_uuid=True), nullable=True, index=True)
+    scope_reference_code: Mapped[str | None] = mapped_column(String(120), nullable=True)
+    payload_json: Mapped[dict] = mapped_column(JSON, nullable=False, default=dict)
+    source_type: Mapped[str] = mapped_column(String(40), nullable=False, server_default="manual")
+    provenance_json: Mapped[dict] = mapped_column(JSON, nullable=False, default=dict)
+    created_by_user_id: Mapped[uuid.UUID | None] = mapped_column(UUID(as_uuid=True), ForeignKey("users.id", ondelete="SET NULL"), nullable=True)
+    is_active: Mapped[bool] = mapped_column(Boolean, nullable=False, server_default="true", index=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, server_default=func.now())
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, server_default=func.now(), onupdate=func.now())
+
+    __table_args__ = (
+        CheckConstraint(
+            "override_type IN ('teacher_free_period','class_subject_timing_preference','room_avoidance','repair_assignment_protection','other_override')",
+            name="ck_timetable_generation_overrides_type",
+        ),
+        CheckConstraint(
+            "strength IN ('hard','strong','normal','low')",
+            name="ck_timetable_generation_overrides_strength",
+        ),
+        CheckConstraint(
+            "scope_type IN ('whole_school','campus','department','grade','class','subject','teacher','room','day','period','period_range','session_reference')",
+            name="ck_timetable_generation_overrides_scope_type",
+        ),
+        CheckConstraint(
+            "source_type IN ('manual','imported','agent_proposal','system_generated')",
+            name="ck_timetable_generation_overrides_source_type",
+        ),
+    )
+
+
+class TimetableGenerationLock(Base):
+    __tablename__ = "timetable_generation_locks"
+
+    id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    tenant_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), ForeignKey("tenants.id", ondelete="CASCADE"), nullable=False, index=True)
+    configuration_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), ForeignKey("timetable_generation_configurations.id", ondelete="CASCADE"), nullable=False, index=True)
+    lock_state: Mapped[str] = mapped_column(String(20), nullable=False, server_default="flexible", index=True)
+    target_type: Mapped[str] = mapped_column(String(30), nullable=False, index=True)
+    target_reference_id: Mapped[uuid.UUID | None] = mapped_column(UUID(as_uuid=True), nullable=True, index=True)
+    target_reference_code: Mapped[str | None] = mapped_column(String(120), nullable=True)
+    day_of_week: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    period_number: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    period_end_number: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    is_manual_hard_lock: Mapped[bool] = mapped_column(Boolean, nullable=False, server_default="false")
+    source_type: Mapped[str] = mapped_column(String(40), nullable=False, server_default="manual")
+    provenance_json: Mapped[dict] = mapped_column(JSON, nullable=False, default=dict)
+    created_by_user_id: Mapped[uuid.UUID | None] = mapped_column(UUID(as_uuid=True), ForeignKey("users.id", ondelete="SET NULL"), nullable=True)
+    is_active: Mapped[bool] = mapped_column(Boolean, nullable=False, server_default="true", index=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, server_default=func.now())
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, server_default=func.now(), onupdate=func.now())
+
+    __table_args__ = (
+        CheckConstraint(
+            "lock_state IN ('locked','prefer_to_keep','flexible')",
+            name="ck_timetable_generation_locks_state",
+        ),
+        CheckConstraint(
+            "target_type IN ('session_reference','teacher','class','subject','grade','room','day','period','period_range')",
+            name="ck_timetable_generation_locks_target_type",
+        ),
+        CheckConstraint("day_of_week IS NULL OR (day_of_week >= 0 AND day_of_week <= 6)", name="ck_timetable_generation_locks_day_of_week"),
+        CheckConstraint("period_number IS NULL OR period_number > 0", name="ck_timetable_generation_locks_period_number_positive"),
+        CheckConstraint(
+            "period_end_number IS NULL OR period_number IS NULL OR period_end_number >= period_number",
+            name="ck_timetable_generation_locks_period_range",
+        ),
+        CheckConstraint(
+            "source_type IN ('manual','imported','agent_proposal','system_generated')",
+            name="ck_timetable_generation_locks_source_type",
+        ),
+    )
+
+
+class TimetableParallelLessonBlock(Base):
+    __tablename__ = "timetable_parallel_lesson_blocks"
+
+    id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    tenant_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), ForeignKey("tenants.id", ondelete="CASCADE"), nullable=False, index=True)
+    academic_year_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), ForeignKey("academic_years.id", ondelete="RESTRICT"), nullable=False, index=True)
+    term_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), ForeignKey("terms.id", ondelete="RESTRICT"), nullable=False, index=True)
+    campus_id: Mapped[uuid.UUID | None] = mapped_column(UUID(as_uuid=True), ForeignKey("campuses.id", ondelete="SET NULL"), nullable=True, index=True)
+    class_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), ForeignKey("classes.id", ondelete="RESTRICT"), nullable=False, index=True)
+    display_label: Mapped[str] = mapped_column(String(160), nullable=False)
+    block_type: Mapped[str] = mapped_column(String(30), nullable=False, index=True)
+    synchronization_requirement: Mapped[str] = mapped_column(String(30), nullable=False, server_default="same_period")
+    source_type: Mapped[str] = mapped_column(String(40), nullable=False, server_default="manual")
+    provenance_json: Mapped[dict] = mapped_column(JSON, nullable=False, default=dict)
+    created_by_user_id: Mapped[uuid.UUID | None] = mapped_column(UUID(as_uuid=True), ForeignKey("users.id", ondelete="SET NULL"), nullable=True)
+    is_active: Mapped[bool] = mapped_column(Boolean, nullable=False, server_default="true", index=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, server_default=func.now())
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, server_default=func.now(), onupdate=func.now())
+
+    __table_args__ = (
+        CheckConstraint(
+            "block_type IN ('foreign_language','electives','split_class','other_parallel')",
+            name="ck_timetable_parallel_blocks_type",
+        ),
+        CheckConstraint(
+            "synchronization_requirement IN ('same_period','same_day')",
+            name="ck_timetable_parallel_blocks_sync_requirement",
+        ),
+        CheckConstraint(
+            "source_type IN ('manual','imported','agent_proposal','system_generated')",
+            name="ck_timetable_parallel_blocks_source_type",
+        ),
+    )
+
+
+class TimetableParallelLessonChild(Base):
+    __tablename__ = "timetable_parallel_lesson_children"
+
+    id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    tenant_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), ForeignKey("tenants.id", ondelete="CASCADE"), nullable=False, index=True)
+    parallel_block_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), ForeignKey("timetable_parallel_lesson_blocks.id", ondelete="CASCADE"), nullable=False, index=True)
+    requirement_id: Mapped[uuid.UUID | None] = mapped_column(UUID(as_uuid=True), ForeignKey("weekly_teaching_requirements.id", ondelete="SET NULL"), nullable=True, index=True)
+    subject_id: Mapped[uuid.UUID | None] = mapped_column(UUID(as_uuid=True), ForeignKey("subjects.id", ondelete="SET NULL"), nullable=True, index=True)
+    teacher_id: Mapped[uuid.UUID | None] = mapped_column(UUID(as_uuid=True), ForeignKey("teachers.id", ondelete="SET NULL"), nullable=True, index=True)
+    room_id: Mapped[uuid.UUID | None] = mapped_column(UUID(as_uuid=True), ForeignKey("teaching_rooms.id", ondelete="SET NULL"), nullable=True, index=True)
+    sequence_order: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    requirement_json: Mapped[dict] = mapped_column(JSON, nullable=False, default=dict)
+    is_active: Mapped[bool] = mapped_column(Boolean, nullable=False, server_default="true", index=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, server_default=func.now())
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, server_default=func.now(), onupdate=func.now())
+
+    __table_args__ = (
+        CheckConstraint(
+            "(requirement_id IS NOT NULL) OR (subject_id IS NOT NULL)",
+            name="ck_timetable_parallel_children_requirement_or_subject",
+        ),
+        CheckConstraint(
+            "sequence_order IS NULL OR sequence_order > 0",
+            name="ck_timetable_parallel_children_sequence_positive",
+        ),
+    )
+
+
 # ─────────────────────────────────────────────────────────────────────────────
 # AuditLog  (immutable event log)
 # ─────────────────────────────────────────────────────────────────────────────

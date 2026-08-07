@@ -394,3 +394,70 @@ Human-only operations remain explicit for:
 - solver eligibility override
 - candidate approval
 - timetable publish
+
+## Phase 10C Batch 3: OR-Tools CP-SAT Solver Engine
+
+### Scope Added
+Batch 3 introduces a deterministic CP-SAT scheduling engine that consumes only the immutable `SchedulingProblem` contract from Batch 2.
+
+Implemented solver package:
+- `services/gateway/timetable_setup/solver/contracts.py`
+- `services/gateway/timetable_setup/solver/constraint_registry.py`
+- `services/gateway/timetable_setup/solver/objective_registry.py`
+- `services/gateway/timetable_setup/solver/cp_sat_solver.py`
+- `services/gateway/timetable_setup/solver/diagnostics.py`
+
+The solver is currently an internal engine boundary and is validated through synthetic/unit tests.
+
+### Hard Constraint Coverage
+Batch 3 hard constraints include:
+- exactly-one placement per occurrence
+- class collision prevention per logical slot
+- teacher collision prevention across normal and parallel-child assignments
+- room collision prevention across normal and parallel-child assignments
+- fixed-session enforcement
+- supported teacher/class/room unavailability constraints
+- teacher daily and consecutive load limits
+- hard preference enforcement for supported hard preference types
+- parallel block synchronization (`same_period`) and frequency consistency checks
+
+Unsupported hard policies produce deterministic blocker diagnostics and return `invalid_problem` without partial execution.
+
+### Soft Objective Coverage
+Batch 3 objective model includes:
+- teacher preference penalties
+- subject distribution penalties
+- teacher gap minimization
+- workload balance
+- preference fairness
+- baseline disruption minimization
+- preserve-existing-assignment preference (`prefer_to_keep`)
+
+Priority mapping is hierarchical (`critical` > `high` > `normal` > `low`) through deterministic coefficient synthesis.
+Stability mode influences disruption penalty intensity (`very_high`, `high`, `balanced`, `flexible`).
+
+### Repair and Lock Semantics
+Batch 3 enforces controlled lock behavior:
+- only `session_reference` lock targets are accepted for hard enforcement
+- unsupported lock targets with hard lock state are blocked with diagnostics
+- lock-based constraints requiring baseline context are blocked when baseline support is unavailable
+
+Repair mode baseline behavior remains conservative and deterministic.
+
+### Determinism and Safety
+Deterministic solver behavior is supported by options such as:
+- explicit random seed
+- single-worker deterministic mode
+- fixed status mapping and diagnostics contract
+
+The solver does not mutate `SchedulingProblem` input data.
+The solver does not perform arbitrary ORM/table reads.
+
+### Explicit Deferrals (Still Not Included)
+Batch 3 does not add:
+- timetable candidate persistence
+- published timetable/version persistence
+- student-level scheduling
+- production timetable generation endpoint/workflow
+
+These remain deferred to later Phase 10C batches.

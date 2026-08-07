@@ -238,3 +238,159 @@ Deferred from Batch 1:
 - timetable publication/versioning workflows
 - teacher-facing timetable UI
 - student-level scheduling and student membership in parallel blocks
+
+## Phase 10C Batch 2: Canonical Scheduling Problem Builder
+
+### Architectural Separation
+Batch 2 adds a deterministic transformation layer:
+
+Canonical data + effective policy + approved generation controls + overrides/locks/preferences + parallel blocks + repair metadata
+-> immutable `SchedulingProblem`
+-> future CP-SAT solver input (deferred to Batch 3)
+
+The solver contract is now explicit: future solving consumes the normalized problem object and does not query arbitrary ORM tables directly.
+
+### SchedulingProblem Contract
+The normalized contract includes:
+- tenant/context metadata (`tenant_id`, `academic_year_id`, `term_id`, optional `campus_id`)
+- generation metadata (`generation_configuration_id`, `generation_mode`, `stability_mode`)
+- deterministic provenance (`source_fingerprint`, `source_revision`)
+- school week + logical periods + bell schedule reference
+- normalized entities (teachers, classes, subjects, rooms)
+- teaching requirements, fixed sessions, policy constraints, preferences, overrides, locks
+- parallel lesson blocks and children
+- repair scope and baseline summary
+- objective priorities
+- validation summary + blockers/warnings/exclusions
+- `solver_eligible` gate (no solver execution)
+
+No ORM rows are returned in the contract. No DB session state is exposed.
+
+### Logical Period Normalization
+Placement identity remains logical:
+- day key + period number (for example `Monday + P3`)
+
+Clock times are metadata only:
+- `starts_at`, `ends_at`, `duration_minutes`
+
+Result:
+- changing only start/end clock values preserves logical placement identity
+- changing logical period structure changes the scheduling domain
+
+No duplicate bell schedule persistence is introduced.
+
+### Entity Normalization (No Students)
+Teacher normalization includes:
+- active user state
+- eligible subject IDs from canonical qualifications
+- weekly load limit hints
+- available/unavailable logical periods
+- fixed assignment references
+
+Class normalization includes:
+- grade reference
+- campus context
+- schedulable logical periods
+- requirement/fixed-session/block references
+
+Subject normalization includes:
+- code/name
+- weekly session and minute demand aggregates
+- room requirements
+- teacher eligibility map
+
+Room normalization includes:
+- room type/capacity/campus
+- specialist capabilities
+- availability windows derived from operational constraints
+
+No student-level scheduling data is included.
+
+### Requirements, Fixed Sessions, Parallel Blocks
+Weekly requirements normalize to deterministic records with:
+- class/subject/teacher linkage
+- weekly sessions/minutes
+- period-distribution bounds
+- room-type expectation
+- fixed-session rule references
+
+Fixed sessions are normalized separately from:
+- baseline assignments
+- preferences
+- locks
+- overrides
+
+Parallel blocks are fully normalized with synchronization semantics.
+Foreign Language example supported:
+- class-facing block: Grade 8A `Foreign Language`
+- child tracks: French, German, Spanish
+- children share synchronization semantics without introducing student membership
+
+### Policy Readiness Integration and Solver Eligibility
+Batch 2 consumes Phase 10B readiness output and operational effective constraints.
+
+`solver_eligible` requires all of:
+- Phase 10B `generation_allowed == true`
+- generation configuration validation true
+- problem-builder validation true
+- configuration lifecycle approved
+
+A high readiness score never overrides a blocker.
+
+### Repair Baseline Behavior
+Repair mode still requires a baseline reference.
+
+Because SchoolOS does not yet expose a durable canonical published timetable baseline model, Batch 2 returns a controlled unsupported baseline normalization state:
+- `baseline.supported = false`
+- explicit reason string
+- empty baseline assignments
+
+No baseline assignments are fabricated.
+
+### Locks, Preferences, Overrides, Objectives
+Locks stay separate from other semantics and preserve:
+- `locked`, `prefer_to_keep`, `flexible`
+- manual hard-lock provenance
+- canonical target validation
+
+Department lock target remains unsupported in lock normalization.
+
+Teacher preference strengths remain symbolic:
+- hard, strong, normal, low
+
+Generation objectives remain symbolic with deterministic defaults for standard mode and disruption-preserving defaults for repair mode.
+No CP-SAT coefficient mapping is introduced.
+
+### Determinism, Immutability, Performance
+Determinism guarantees include:
+- stable sorting
+- stable identifiers
+- deterministic source fingerprint over normalized content
+
+Immutability:
+- normalized problem structures are frozen/read-only after construction
+
+Performance approach:
+- batch-load canonical inputs by scope
+- use in-memory maps for normalization
+- avoid audit/PDF/import-history payloads for problem construction
+
+### API Inspection Routes (Leadership Only)
+Added under existing timetable-generation routes:
+- `POST /leadership/timetable-generation/configurations/{id}/problem/validate`
+- `GET /leadership/timetable-generation/configurations/{id}/problem/summary`
+- `POST /leadership/timetable-generation/configurations/{id}/problem/preview`
+
+These routes do not:
+- run solver
+- generate timetable candidates
+- publish timetables
+
+### Agent/Human Boundaries (Batch 2)
+Added safe read/proposal contracts for scheduling-problem inspection and correction planning.
+
+Human-only operations remain explicit for:
+- solver start
+- solver eligibility override
+- candidate approval
+- timetable publish

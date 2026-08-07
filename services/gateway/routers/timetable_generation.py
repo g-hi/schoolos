@@ -11,6 +11,7 @@ from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from services.gateway.ai.audit import log_action
+from services.gateway.timetable_setup.problem_builder import SchedulingProblemBuildError, build_scheduling_problem, summarize_problem
 from services.gateway.timetable_setup.policy_readiness import build_policy_readiness_payload
 from shared.auth.dependencies import resolve_authenticated_leadership
 from shared.auth.tenant import resolve_tenant
@@ -2194,6 +2195,123 @@ async def generation_configuration_summary(
         "parallel_block_count": parallel_block_count,
         "repair_settings": config.repair_scope_json,
         "future_solver_eligibility": bool(config.lifecycle_status == "approved" and validation_summary.get("is_valid") and validation_summary.get("policy_generation_allowed")),
+        "explicit_non_actions": {
+            "solver_started": False,
+            "candidate_generated": False,
+            "timetable_published": False,
+        },
+    }
+
+
+@router.post("/configurations/{configuration_id}/problem/validate", summary="Validate scheduling problem build")
+async def validate_scheduling_problem_build(
+    configuration_id: uuid.UUID,
+    tenant: Tenant = Depends(resolve_tenant),
+    actor: User = Depends(resolve_authenticated_leadership),
+    db: AsyncSession = Depends(get_db),
+):
+    _ensure_actor_tenant(actor, tenant)
+    await set_tenant_context(db, tenant.id)
+
+    config = await db.scalar(
+        select(TimetableGenerationConfiguration).where(
+            TimetableGenerationConfiguration.id == configuration_id,
+            TimetableGenerationConfiguration.tenant_id == tenant.id,
+        )
+    )
+    if config is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Generation configuration not found.")
+
+    config_validation = await _run_generation_validation(db=db, tenant=tenant, config=config)
+
+    try:
+        result = await build_scheduling_problem(db=db, tenant_id=tenant.id, configuration_id=configuration_id)
+    except SchedulingProblemBuildError as exc:
+        raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail=str(exc)) from exc
+
+    summary = summarize_problem(result)
+    summary["configuration_validation"] = config_validation
+    summary["solver_eligible"] = bool(
+        config_validation.get("is_valid")
+        and config_validation.get("policy_generation_allowed")
+        and result.problem.solver_eligible
+    )
+    return summary
+
+
+@router.get("/configurations/{configuration_id}/problem/summary", summary="Get scheduling problem summary")
+async def get_scheduling_problem_summary(
+    configuration_id: uuid.UUID,
+    tenant: Tenant = Depends(resolve_tenant),
+    actor: User = Depends(resolve_authenticated_leadership),
+    db: AsyncSession = Depends(get_db),
+):
+    _ensure_actor_tenant(actor, tenant)
+    await set_tenant_context(db, tenant.id)
+
+    config = await db.scalar(
+        select(TimetableGenerationConfiguration).where(
+            TimetableGenerationConfiguration.id == configuration_id,
+            TimetableGenerationConfiguration.tenant_id == tenant.id,
+        )
+    )
+    if config is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Generation configuration not found.")
+
+    config_validation = await _run_generation_validation(db=db, tenant=tenant, config=config)
+
+    try:
+        result = await build_scheduling_problem(db=db, tenant_id=tenant.id, configuration_id=configuration_id)
+    except SchedulingProblemBuildError as exc:
+        raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail=str(exc)) from exc
+
+    payload = summarize_problem(result)
+    payload["configuration_validation"] = config_validation
+    payload["solver_eligible"] = bool(
+        config_validation.get("is_valid")
+        and config_validation.get("policy_generation_allowed")
+        and result.problem.solver_eligible
+    )
+    return payload
+
+
+@router.post("/configurations/{configuration_id}/problem/preview", summary="Preview normalized scheduling problem")
+async def preview_scheduling_problem(
+    configuration_id: uuid.UUID,
+    tenant: Tenant = Depends(resolve_tenant),
+    actor: User = Depends(resolve_authenticated_leadership),
+    db: AsyncSession = Depends(get_db),
+):
+    _ensure_actor_tenant(actor, tenant)
+    await set_tenant_context(db, tenant.id)
+
+    config = await db.scalar(
+        select(TimetableGenerationConfiguration).where(
+            TimetableGenerationConfiguration.id == configuration_id,
+            TimetableGenerationConfiguration.tenant_id == tenant.id,
+        )
+    )
+    if config is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Generation configuration not found.")
+
+    config_validation = await _run_generation_validation(db=db, tenant=tenant, config=config)
+
+    try:
+        result = await build_scheduling_problem(db=db, tenant_id=tenant.id, configuration_id=configuration_id)
+    except SchedulingProblemBuildError as exc:
+        raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail=str(exc)) from exc
+
+    summary = summarize_problem(result)
+    summary["configuration_validation"] = config_validation
+    summary["solver_eligible"] = bool(
+        config_validation.get("is_valid")
+        and config_validation.get("policy_generation_allowed")
+        and result.problem.solver_eligible
+    )
+
+    return {
+        "summary": summary,
+        "problem": result.problem.to_dict(),
         "explicit_non_actions": {
             "solver_started": False,
             "candidate_generated": False,

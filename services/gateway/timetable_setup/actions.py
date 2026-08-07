@@ -538,6 +538,64 @@ def explain_bell_schedule_effect(*, bell_schedule_id: uuid.UUID) -> dict:
     }
 
 
+def inspect_scheduling_problem_summary(*, configuration_id: uuid.UUID) -> dict:
+    return {
+        "action": "inspect_scheduling_problem_summary",
+        "configuration_id": str(configuration_id),
+        "safe": True,
+        "note": "Read-only summary of normalized scheduling inputs and solver eligibility gate.",
+    }
+
+
+def explain_problem_build_blockers(*, configuration_id: uuid.UUID) -> dict:
+    return {
+        "action": "explain_problem_build_blockers",
+        "configuration_id": str(configuration_id),
+        "safe": True,
+        "note": "Read-only explanation of deterministic build blockers and warnings.",
+    }
+
+
+def summarize_scheduling_inputs(*, configuration_id: uuid.UUID) -> dict:
+    return {
+        "action": "summarize_scheduling_inputs",
+        "configuration_id": str(configuration_id),
+        "safe": True,
+    }
+
+
+def explain_parallel_block_normalization(*, configuration_id: uuid.UUID) -> dict:
+    return {
+        "action": "explain_parallel_block_normalization",
+        "configuration_id": str(configuration_id),
+        "safe": True,
+    }
+
+
+def explain_repair_inputs(*, configuration_id: uuid.UUID) -> dict:
+    return {
+        "action": "explain_repair_inputs",
+        "configuration_id": str(configuration_id),
+        "safe": True,
+    }
+
+
+def explain_lock_inputs(*, configuration_id: uuid.UUID) -> dict:
+    return {
+        "action": "explain_lock_inputs",
+        "configuration_id": str(configuration_id),
+        "safe": True,
+    }
+
+
+def explain_generation_objectives(*, configuration_id: uuid.UUID) -> dict:
+    return {
+        "action": "explain_generation_objectives",
+        "configuration_id": str(configuration_id),
+        "safe": True,
+    }
+
+
 def propose_teacher_scheduling_preference(*, payload: dict) -> dict:
     return {
         "action": "propose_teacher_scheduling_preference",
@@ -593,6 +651,60 @@ def propose_parallel_block_configuration(*, payload: dict) -> dict:
         "action": "propose_parallel_block_configuration",
         "payload": payload,
         "safe": True,
+    }
+
+
+def propose_problem_input_correction(*, configuration_id: uuid.UUID, payload: dict) -> dict:
+    return {
+        "action": "propose_problem_input_correction",
+        "configuration_id": str(configuration_id),
+        "payload": payload,
+        "safe": True,
+        "note": "Proposal only; does not mutate canonical setup or policy records.",
+    }
+
+
+def propose_generation_configuration_revision(*, configuration_id: uuid.UUID, payload: dict) -> dict:
+    return {
+        "action": "propose_generation_configuration_revision",
+        "configuration_id": str(configuration_id),
+        "payload": payload,
+        "safe": True,
+    }
+
+
+def propose_lock_adjustment(*, configuration_id: uuid.UUID, payload: dict) -> dict:
+    return {
+        "action": "propose_lock_adjustment",
+        "configuration_id": str(configuration_id),
+        "payload": payload,
+        "safe": True,
+    }
+
+
+def propose_preference_adjustment(*, configuration_id: uuid.UUID, payload: dict) -> dict:
+    return {
+        "action": "propose_preference_adjustment",
+        "configuration_id": str(configuration_id),
+        "payload": payload,
+        "safe": True,
+    }
+
+
+def propose_repair_scope_adjustment(*, configuration_id: uuid.UUID, payload: dict) -> dict:
+    return {
+        "action": "propose_repair_scope_adjustment",
+        "configuration_id": str(configuration_id),
+        "payload": payload,
+        "safe": True,
+    }
+
+
+def override_solver_eligibility(*, configuration_id: uuid.UUID) -> dict:
+    return {
+        "action": "override_solver_eligibility",
+        "configuration_id": str(configuration_id),
+        "requires_human_authorization": True,
     }
 
 

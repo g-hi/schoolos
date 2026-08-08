@@ -14,6 +14,19 @@ from services.gateway.ai.audit import log_action
 from services.gateway.timetable_setup.candidates import CandidateGenerationOptions, generate_timetable_candidates
 from services.gateway.timetable_setup.problem_builder import SchedulingProblemBuildError, build_scheduling_problem, summarize_problem
 from services.gateway.timetable_setup.policy_readiness import build_policy_readiness_payload
+from services.gateway.timetable_setup.timetable_versions import (
+    TimetableVersionError,
+    load_version_assignments,
+    materialize_candidate_version,
+    repair_impact_preview,
+    resolve_effective_version,
+    transition_approve,
+    transition_cancel,
+    transition_publish,
+    transition_submit,
+    version_diff,
+    version_to_summary,
+)
 from shared.auth.dependencies import resolve_authenticated_leadership
 from shared.auth.tenant import resolve_tenant
 from shared.db.connection import get_db, set_tenant_context
@@ -34,6 +47,9 @@ from shared.db.models import (
     TimetableParallelLessonBlock,
     TimetableParallelLessonChild,
     TimetableTeacherSchedulingPreference,
+    Timetable,
+    TimetableVersion,
+    TimetableVersionAssignment,
     User,
     WeeklyTeachingRequirement,
 )
@@ -143,6 +159,18 @@ def _ensure_actor_tenant(actor: User, tenant: Tenant) -> None:
         )
 
 
+def _ensure_principal(actor: User) -> None:
+    if actor.role != "principal":
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Principal authority is required.")
+
+
+def _raise_timetable_version_error(exc: TimetableVersionError) -> None:
+    detail: Any = {"code": exc.code, "message": exc.message}
+    if exc.details:
+        detail["details"] = exc.details
+    raise HTTPException(status_code=exc.status_code, detail=detail)
+
+
 class GenerationObjectiveInput(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
@@ -163,6 +191,7 @@ class GenerationConfigurationCreateRequest(BaseModel):
     stability_mode: str = "balanced"
     baseline_reference_type: str | None = None
     baseline_reference_id: uuid.UUID | None = None
+    baseline_timetable_version_id: uuid.UUID | None = None
     effective_start_date: date_type | None = None
     effective_end_date: date_type | None = None
     source_type: str = "manual"
@@ -180,6 +209,7 @@ class GenerationConfigurationPatchRequest(BaseModel):
     stability_mode: str | None = None
     baseline_reference_type: str | None = None
     baseline_reference_id: uuid.UUID | None = None
+    baseline_timetable_version_id: uuid.UUID | None = None
     effective_start_date: date_type | None = None
     effective_end_date: date_type | None = None
     objective_priorities: list[GenerationObjectiveInput] | None = None
@@ -202,6 +232,38 @@ class CandidatePreviewRequest(BaseModel):
     include_comparison: bool = True
     include_explanation_facts: bool = True
     response_mode: str = "summary"
+
+
+class MaterializeCandidateVersionRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    candidate_id: str
+    expected_problem_fingerprint: str
+    expected_assignment_fingerprint: str | None = None
+    candidate_count: int = 3
+    candidate_profiles: list[str] = Field(default_factory=lambda: ["configured", "balanced", "preference_focused"])
+    candidate_profile: str | None = None
+    effective_from: date_type | None = None
+    label: str | None = None
+
+
+class PublishTimetableVersionRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    effective_from: date_type
+
+
+class RepairImpactPreviewRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    repair_reason: str
+    scope_level: str = "minimum"
+    trigger_teacher_ids: list[str] = Field(default_factory=list)
+    trigger_class_ids: list[str] = Field(default_factory=list)
+    trigger_room_ids: list[str] = Field(default_factory=list)
+    trigger_requirement_ids: list[str] = Field(default_factory=list)
+    trigger_occurrence_ids: list[str] = Field(default_factory=list)
+    trigger_parallel_block_ids: list[str] = Field(default_factory=list)
 
 
 class TeacherPreferenceCreateRequest(BaseModel):
@@ -395,6 +457,34 @@ async def _validate_bell_schedule_scope(
         raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail="Bell schedule campus mismatch.")
 
 
+async def _validate_baseline_timetable_version_scope(
+    *,
+    db: AsyncSession,
+    tenant_id: uuid.UUID,
+    baseline_timetable_version_id: uuid.UUID | None,
+    academic_year_id: uuid.UUID,
+    term_id: uuid.UUID,
+    campus_id: uuid.UUID | None,
+) -> None:
+    if baseline_timetable_version_id is None:
+        return
+
+    row = await db.scalar(
+        select(TimetableVersion)
+        .join(Timetable, Timetable.id == TimetableVersion.timetable_id)
+        .where(
+            TimetableVersion.id == baseline_timetable_version_id,
+            TimetableVersion.tenant_id == tenant_id,
+            Timetable.tenant_id == tenant_id,
+            Timetable.academic_year_id == academic_year_id,
+            Timetable.term_id == term_id,
+            Timetable.campus_id == campus_id,
+        )
+    )
+    if row is None:
+        raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail="Baseline timetable version is outside tenant/context scope.")
+
+
 async def _resolve_scope_reference(
     *,
     db: AsyncSession,
@@ -453,6 +543,7 @@ def _configuration_payload(item: TimetableGenerationConfiguration) -> dict[str, 
         "lifecycle_status": item.lifecycle_status,
         "baseline_reference_type": item.baseline_reference_type,
         "baseline_reference_id": str(item.baseline_reference_id) if item.baseline_reference_id else None,
+        "baseline_timetable_version_id": str(item.baseline_timetable_version_id) if item.baseline_timetable_version_id else None,
         "effective_start_date": item.effective_start_date,
         "effective_end_date": item.effective_end_date,
         "objective_priorities": item.objective_priorities_json,
@@ -633,8 +724,8 @@ async def _run_generation_validation(
     if config.generation_mode not in GENERATION_MODES:
         errors.append("Unsupported generation mode.")
 
-    if config.generation_mode == "repair" and config.baseline_reference_id is None:
-        errors.append("Repair mode requires a baseline_reference_id.")
+    if config.generation_mode == "repair" and config.baseline_reference_id is None and config.baseline_timetable_version_id is None:
+        errors.append("Repair mode requires baseline_reference_id or baseline_timetable_version_id.")
 
     if config.generation_mode in {"standard", "customized"} and config.baseline_reference_id is not None and config.baseline_reference_type is None:
         errors.append("baseline_reference_type is required when baseline_reference_id is provided.")
@@ -739,8 +830,17 @@ async def create_generation_configuration(
         campus_id=body.campus_id,
     )
 
-    if body.generation_mode == "repair" and body.baseline_reference_id is None:
-        raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail="Repair mode requires baseline_reference_id.")
+    await _validate_baseline_timetable_version_scope(
+        db=db,
+        tenant_id=tenant.id,
+        baseline_timetable_version_id=body.baseline_timetable_version_id,
+        academic_year_id=body.academic_year_id,
+        term_id=body.term_id,
+        campus_id=body.campus_id,
+    )
+
+    if body.generation_mode == "repair" and body.baseline_reference_id is None and body.baseline_timetable_version_id is None:
+        raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail="Repair mode requires baseline reference.")
 
     item = TimetableGenerationConfiguration(
         id=uuid.uuid4(),
@@ -756,6 +856,7 @@ async def create_generation_configuration(
         lifecycle_status="draft",
         baseline_reference_type=body.baseline_reference_type,
         baseline_reference_id=body.baseline_reference_id,
+        baseline_timetable_version_id=body.baseline_timetable_version_id,
         effective_start_date=body.effective_start_date,
         effective_end_date=body.effective_end_date,
         objective_priorities_json={},
@@ -841,6 +942,16 @@ async def patch_generation_configuration(
         item.baseline_reference_type = body.baseline_reference_type
     if body.baseline_reference_id is not None:
         item.baseline_reference_id = body.baseline_reference_id
+    if body.baseline_timetable_version_id is not None:
+        await _validate_baseline_timetable_version_scope(
+            db=db,
+            tenant_id=tenant.id,
+            baseline_timetable_version_id=body.baseline_timetable_version_id,
+            academic_year_id=item.academic_year_id,
+            term_id=item.term_id,
+            campus_id=item.campus_id,
+        )
+        item.baseline_timetable_version_id = body.baseline_timetable_version_id
 
     if body.effective_start_date is not None:
         item.effective_start_date = body.effective_start_date
@@ -2460,4 +2571,465 @@ async def preview_timetable_candidates(
             "timetable_published": False,
             "notifications_sent": False,
         },
+    }
+
+
+@router.get("/timetables", summary="List canonical timetable containers")
+async def list_timetables(
+    tenant: Tenant = Depends(resolve_tenant),
+    actor: User = Depends(resolve_authenticated_leadership),
+    db: AsyncSession = Depends(get_db),
+):
+    _ensure_actor_tenant(actor, tenant)
+    await set_tenant_context(db, tenant.id)
+
+    rows = (
+        await db.execute(
+            select(Timetable)
+            .where(Timetable.tenant_id == tenant.id)
+            .order_by(Timetable.created_at.desc())
+        )
+    ).scalars().all()
+
+    payload: list[dict[str, Any]] = []
+    for row in rows:
+        version_count = await db.scalar(select(func.count(TimetableVersion.id)).where(TimetableVersion.timetable_id == row.id, TimetableVersion.tenant_id == tenant.id))
+        payload.append(
+            {
+                "id": str(row.id),
+                "academic_year_id": str(row.academic_year_id),
+                "term_id": str(row.term_id),
+                "campus_id": str(row.campus_id) if row.campus_id else None,
+                "name": row.name,
+                "status": row.status,
+                "is_active": bool(row.is_active),
+                "version_count": int(version_count or 0),
+                "created_at": row.created_at.isoformat() if row.created_at else None,
+            }
+        )
+
+    return {"items": payload, "count": len(payload)}
+
+
+@router.get("/timetables/{timetable_id}", summary="Get canonical timetable container")
+async def get_timetable(
+    timetable_id: uuid.UUID,
+    tenant: Tenant = Depends(resolve_tenant),
+    actor: User = Depends(resolve_authenticated_leadership),
+    db: AsyncSession = Depends(get_db),
+):
+    _ensure_actor_tenant(actor, tenant)
+    await set_tenant_context(db, tenant.id)
+
+    row = await db.scalar(select(Timetable).where(Timetable.id == timetable_id, Timetable.tenant_id == tenant.id))
+    if row is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Timetable not found.")
+
+    version_count = await db.scalar(select(func.count(TimetableVersion.id)).where(TimetableVersion.timetable_id == row.id, TimetableVersion.tenant_id == tenant.id))
+    return {
+        "id": str(row.id),
+        "tenant_id": str(row.tenant_id),
+        "academic_year_id": str(row.academic_year_id),
+        "term_id": str(row.term_id),
+        "campus_id": str(row.campus_id) if row.campus_id else None,
+        "name": row.name,
+        "status": row.status,
+        "is_active": bool(row.is_active),
+        "version_count": int(version_count or 0),
+        "created_at": row.created_at.isoformat() if row.created_at else None,
+        "updated_at": row.updated_at.isoformat() if row.updated_at else None,
+    }
+
+
+@router.get("/timetables/{timetable_id}/versions", summary="List timetable versions")
+async def list_timetable_versions(
+    timetable_id: uuid.UUID,
+    tenant: Tenant = Depends(resolve_tenant),
+    actor: User = Depends(resolve_authenticated_leadership),
+    db: AsyncSession = Depends(get_db),
+):
+    _ensure_actor_tenant(actor, tenant)
+    await set_tenant_context(db, tenant.id)
+
+    timetable = await db.scalar(select(Timetable).where(Timetable.id == timetable_id, Timetable.tenant_id == tenant.id))
+    if timetable is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Timetable not found.")
+
+    versions = (
+        await db.execute(
+            select(TimetableVersion)
+            .where(TimetableVersion.tenant_id == tenant.id, TimetableVersion.timetable_id == timetable_id)
+            .order_by(TimetableVersion.version_number.asc())
+        )
+    ).scalars().all()
+
+    payload: list[dict[str, Any]] = []
+    for item in versions:
+        assignment_count = await db.scalar(
+            select(func.count()).select_from(TimetableVersionAssignment).where(
+                TimetableVersionAssignment.tenant_id == tenant.id,
+                TimetableVersionAssignment.timetable_version_id == item.id,
+            )
+        )
+        payload.append(version_to_summary(item, assignment_count=int(assignment_count or 0), include_assignments=False))
+    return {"items": payload, "count": len(payload)}
+
+
+@router.get("/timetable-versions/{version_id}", summary="Get timetable version")
+async def get_timetable_version(
+    version_id: uuid.UUID,
+    include_assignments: bool = Query(default=False),
+    tenant: Tenant = Depends(resolve_tenant),
+    actor: User = Depends(resolve_authenticated_leadership),
+    db: AsyncSession = Depends(get_db),
+):
+    _ensure_actor_tenant(actor, tenant)
+    await set_tenant_context(db, tenant.id)
+
+    row = await db.scalar(select(TimetableVersion).where(TimetableVersion.id == version_id, TimetableVersion.tenant_id == tenant.id))
+    if row is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Timetable version not found.")
+
+    assignment_rows = await load_version_assignments(db, tenant_id=tenant.id, version_id=row.id)
+    serialized = [
+        {
+            "assignment_key": item.assignment_key,
+            "occurrence_id": item.occurrence_id,
+            "requirement_id": item.requirement_id,
+            "class_id": item.class_id,
+            "subject_id": item.subject_id,
+            "teacher_id": item.teacher_id,
+            "room_id": item.room_id,
+            "day_key": item.day_key,
+            "period_key": item.period_key,
+            "periods_per_session": item.periods_per_session,
+            "occupied_period_keys": list(item.occupied_period_keys_json or []),
+            "parallel_block_id": item.parallel_block_id,
+            "parallel_child_id": item.parallel_child_id,
+            "fixed": bool(item.fixed),
+            "lock_state": item.lock_state,
+            "protection_snapshot": dict(item.protection_snapshot_json or {}),
+            "provenance": dict(item.provenance_json or {}),
+        }
+        for item in assignment_rows
+    ]
+
+    return version_to_summary(
+        row,
+        assignment_count=len(serialized),
+        include_assignments=include_assignments,
+        assignments=serialized if include_assignments else None,
+    )
+
+
+@router.post("/configurations/{configuration_id}/versions/from-candidate", summary="Materialize verified candidate into immutable timetable version")
+async def materialize_timetable_version_from_candidate(
+    configuration_id: uuid.UUID,
+    body: MaterializeCandidateVersionRequest,
+    tenant: Tenant = Depends(resolve_tenant),
+    actor: User = Depends(resolve_authenticated_leadership),
+    db: AsyncSession = Depends(get_db),
+):
+    _ensure_actor_tenant(actor, tenant)
+    await set_tenant_context(db, tenant.id)
+
+    try:
+        result = await materialize_candidate_version(
+            db,
+            tenant_id=tenant.id,
+            actor=actor,
+            configuration_id=configuration_id,
+            candidate_id=body.candidate_id,
+            expected_problem_fingerprint=body.expected_problem_fingerprint,
+            expected_assignment_fingerprint=body.expected_assignment_fingerprint,
+            candidate_count=body.candidate_count,
+            candidate_profiles=tuple(body.candidate_profiles),
+            candidate_profile=body.candidate_profile,
+            effective_from=body.effective_from,
+            label=body.label,
+        )
+    except TimetableVersionError as exc:
+        _raise_timetable_version_error(exc)
+
+    await log_action(
+        db=db,
+        tenant_id=tenant.id,
+        action="timetable_generation.version.materialized_from_candidate",
+        entity_type="TimetableVersion",
+        entity_id=result.version.id,
+        actor_id=actor.id,
+        details={
+            "configuration_id": str(configuration_id),
+            "candidate_id": body.candidate_id,
+            "assignment_count": result.assignment_count,
+            "source_problem_fingerprint": body.expected_problem_fingerprint,
+            "assignment_fingerprint": result.version.source_assignment_fingerprint,
+        },
+    )
+    await db.commit()
+    await db.refresh(result.version)
+
+    return {
+        "timetable": {
+            "id": str(result.timetable.id),
+            "academic_year_id": str(result.timetable.academic_year_id),
+            "term_id": str(result.timetable.term_id),
+            "campus_id": str(result.timetable.campus_id) if result.timetable.campus_id else None,
+            "name": result.timetable.name,
+        },
+        "version": version_to_summary(result.version, assignment_count=result.assignment_count, include_assignments=False),
+        "explicit_non_actions": {
+            "published": False,
+            "notifications_sent": False,
+        },
+    }
+
+
+@router.post("/configurations/{configuration_id}/repair/impact-preview", summary="Preview deterministic repair impact")
+async def preview_repair_impact(
+    configuration_id: uuid.UUID,
+    body: RepairImpactPreviewRequest,
+    tenant: Tenant = Depends(resolve_tenant),
+    actor: User = Depends(resolve_authenticated_leadership),
+    db: AsyncSession = Depends(get_db),
+):
+    _ensure_actor_tenant(actor, tenant)
+    await set_tenant_context(db, tenant.id)
+
+    try:
+        payload = await repair_impact_preview(
+            db,
+            tenant_id=tenant.id,
+            configuration_id=configuration_id,
+            repair_reason=body.repair_reason,
+            scope_level=body.scope_level,
+            trigger_teacher_ids=tuple(body.trigger_teacher_ids),
+            trigger_class_ids=tuple(body.trigger_class_ids),
+            trigger_room_ids=tuple(body.trigger_room_ids),
+            trigger_requirement_ids=tuple(body.trigger_requirement_ids),
+            trigger_occurrence_ids=tuple(body.trigger_occurrence_ids),
+            trigger_parallel_block_ids=tuple(body.trigger_parallel_block_ids),
+        )
+    except TimetableVersionError as exc:
+        _raise_timetable_version_error(exc)
+
+    await log_action(
+        db=db,
+        tenant_id=tenant.id,
+        action="timetable_generation.repair.impact_previewed",
+        entity_type="TimetableGenerationConfiguration",
+        entity_id=configuration_id,
+        actor_id=actor.id,
+        details={
+            "scope_level": body.scope_level,
+            "repair_reason": body.repair_reason,
+            "direct_count": payload["direct_count"],
+            "manual_lock_count": payload["manual_lock_count"],
+        },
+    )
+    await db.commit()
+    return payload
+
+
+@router.post("/timetable-versions/{version_id}/submit", summary="Submit candidate timetable version for review")
+async def submit_timetable_version(
+    version_id: uuid.UUID,
+    tenant: Tenant = Depends(resolve_tenant),
+    actor: User = Depends(resolve_authenticated_leadership),
+    db: AsyncSession = Depends(get_db),
+):
+    _ensure_actor_tenant(actor, tenant)
+    await set_tenant_context(db, tenant.id)
+
+    try:
+        version = await transition_submit(db, tenant_id=tenant.id, version_id=version_id, actor=actor)
+    except TimetableVersionError as exc:
+        _raise_timetable_version_error(exc)
+
+    await log_action(
+        db=db,
+        tenant_id=tenant.id,
+        action="timetable_generation.version.submitted",
+        entity_type="TimetableVersion",
+        entity_id=version.id,
+        actor_id=actor.id,
+        details={"lifecycle_status": version.lifecycle_status},
+    )
+    await db.commit()
+    assignment_count = await db.scalar(select(func.count()).select_from(TimetableVersionAssignment).where(TimetableVersionAssignment.tenant_id == tenant.id, TimetableVersionAssignment.timetable_version_id == version.id))
+    return version_to_summary(version, assignment_count=int(assignment_count or 0), include_assignments=False)
+
+
+@router.post("/timetable-versions/{version_id}/approve", summary="Approve timetable version")
+async def approve_timetable_version(
+    version_id: uuid.UUID,
+    tenant: Tenant = Depends(resolve_tenant),
+    actor: User = Depends(resolve_authenticated_leadership),
+    db: AsyncSession = Depends(get_db),
+):
+    _ensure_actor_tenant(actor, tenant)
+    _ensure_principal(actor)
+    await set_tenant_context(db, tenant.id)
+
+    try:
+        version = await transition_approve(db, tenant_id=tenant.id, version_id=version_id, actor=actor)
+    except TimetableVersionError as exc:
+        _raise_timetable_version_error(exc)
+
+    await log_action(
+        db=db,
+        tenant_id=tenant.id,
+        action="timetable_generation.version.approved",
+        entity_type="TimetableVersion",
+        entity_id=version.id,
+        actor_id=actor.id,
+        details={"lifecycle_status": version.lifecycle_status},
+    )
+    await db.commit()
+    assignment_count = await db.scalar(select(func.count()).select_from(TimetableVersionAssignment).where(TimetableVersionAssignment.tenant_id == tenant.id, TimetableVersionAssignment.timetable_version_id == version.id))
+    return version_to_summary(version, assignment_count=int(assignment_count or 0), include_assignments=False)
+
+
+@router.post("/timetable-versions/{version_id}/publish", summary="Publish approved timetable version")
+async def publish_timetable_version(
+    version_id: uuid.UUID,
+    body: PublishTimetableVersionRequest,
+    tenant: Tenant = Depends(resolve_tenant),
+    actor: User = Depends(resolve_authenticated_leadership),
+    db: AsyncSession = Depends(get_db),
+):
+    _ensure_actor_tenant(actor, tenant)
+    _ensure_principal(actor)
+    await set_tenant_context(db, tenant.id)
+
+    try:
+        version = await transition_publish(
+            db,
+            tenant_id=tenant.id,
+            version_id=version_id,
+            actor=actor,
+            effective_from=body.effective_from,
+        )
+    except TimetableVersionError as exc:
+        _raise_timetable_version_error(exc)
+
+    await log_action(
+        db=db,
+        tenant_id=tenant.id,
+        action="timetable_generation.version.published",
+        entity_type="TimetableVersion",
+        entity_id=version.id,
+        actor_id=actor.id,
+        details={"effective_from": body.effective_from.isoformat(), "lifecycle_status": version.lifecycle_status},
+    )
+    await db.commit()
+    assignment_count = await db.scalar(select(func.count()).select_from(TimetableVersionAssignment).where(TimetableVersionAssignment.tenant_id == tenant.id, TimetableVersionAssignment.timetable_version_id == version.id))
+    return version_to_summary(version, assignment_count=int(assignment_count or 0), include_assignments=False)
+
+
+@router.post("/timetable-versions/{version_id}/cancel", summary="Cancel candidate, review, or approved timetable version")
+async def cancel_timetable_version(
+    version_id: uuid.UUID,
+    tenant: Tenant = Depends(resolve_tenant),
+    actor: User = Depends(resolve_authenticated_leadership),
+    db: AsyncSession = Depends(get_db),
+):
+    _ensure_actor_tenant(actor, tenant)
+    await set_tenant_context(db, tenant.id)
+
+    try:
+        version = await transition_cancel(db, tenant_id=tenant.id, version_id=version_id, actor=actor)
+    except TimetableVersionError as exc:
+        _raise_timetable_version_error(exc)
+
+    await log_action(
+        db=db,
+        tenant_id=tenant.id,
+        action="timetable_generation.version.cancelled",
+        entity_type="TimetableVersion",
+        entity_id=version.id,
+        actor_id=actor.id,
+        details={"lifecycle_status": version.lifecycle_status},
+    )
+    await db.commit()
+    assignment_count = await db.scalar(select(func.count()).select_from(TimetableVersionAssignment).where(TimetableVersionAssignment.tenant_id == tenant.id, TimetableVersionAssignment.timetable_version_id == version.id))
+    return version_to_summary(version, assignment_count=int(assignment_count or 0), include_assignments=False)
+
+
+@router.get("/timetable-versions/{version_id}/diff/{other_version_id}", summary="Diff two timetable versions")
+async def get_timetable_version_diff(
+    version_id: uuid.UUID,
+    other_version_id: uuid.UUID,
+    include_details: bool = Query(default=False),
+    tenant: Tenant = Depends(resolve_tenant),
+    actor: User = Depends(resolve_authenticated_leadership),
+    db: AsyncSession = Depends(get_db),
+):
+    _ensure_actor_tenant(actor, tenant)
+    await set_tenant_context(db, tenant.id)
+
+    try:
+        payload = await version_diff(
+            db,
+            tenant_id=tenant.id,
+            left_version_id=version_id,
+            right_version_id=other_version_id,
+        )
+    except TimetableVersionError as exc:
+        _raise_timetable_version_error(exc)
+
+    if not include_details:
+        payload = {**payload, "details": []}
+    return payload
+
+
+@router.get("/timetables/{timetable_id}/effective-version", summary="Resolve effective timetable version on date")
+async def get_effective_timetable_version(
+    timetable_id: uuid.UUID,
+    on: date_type,
+    include_assignments: bool = Query(default=False),
+    tenant: Tenant = Depends(resolve_tenant),
+    actor: User = Depends(resolve_authenticated_leadership),
+    db: AsyncSession = Depends(get_db),
+):
+    _ensure_actor_tenant(actor, tenant)
+    await set_tenant_context(db, tenant.id)
+
+    timetable = await db.scalar(select(Timetable).where(Timetable.id == timetable_id, Timetable.tenant_id == tenant.id))
+    if timetable is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Timetable not found.")
+
+    version = await resolve_effective_version(db, tenant_id=tenant.id, timetable_id=timetable_id, on_date=on)
+    if version is None:
+        return {"effective_on": on.isoformat(), "version": None}
+
+    assignment_rows = await load_version_assignments(db, tenant_id=tenant.id, version_id=version.id)
+    assignments = [
+        {
+            "assignment_key": item.assignment_key,
+            "occurrence_id": item.occurrence_id,
+            "requirement_id": item.requirement_id,
+            "class_id": item.class_id,
+            "subject_id": item.subject_id,
+            "teacher_id": item.teacher_id,
+            "room_id": item.room_id,
+            "day_key": item.day_key,
+            "period_key": item.period_key,
+            "periods_per_session": item.periods_per_session,
+            "occupied_period_keys": list(item.occupied_period_keys_json or []),
+            "parallel_block_id": item.parallel_block_id,
+            "parallel_child_id": item.parallel_child_id,
+            "fixed": bool(item.fixed),
+        }
+        for item in assignment_rows
+    ]
+
+    return {
+        "effective_on": on.isoformat(),
+        "version": version_to_summary(
+            version,
+            assignment_count=len(assignments),
+            include_assignments=include_assignments,
+            assignments=assignments if include_assignments else None,
+        ),
     }

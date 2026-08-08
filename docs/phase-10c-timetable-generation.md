@@ -418,6 +418,126 @@ Locks stay separate from other semantics and preserve:
 - manual hard-lock provenance
 - canonical target validation
 
+## Phase 10C Batch 5: Canonical Timetable Versions, Human Approval, Publication, and Repair Baseline
+
+### Canonical Persistence
+Batch 5 introduces one durable canonical timetable model:
+- `Timetable`: tenant/year/term/campus container for a logical school timetable
+- `TimetableVersion`: immutable snapshot lifecycle and effective-date history
+- `TimetableVersionAssignment`: immutable canonical assignment rows for each version
+
+There is one authoritative timetable source. Class-facing and teacher-facing timetable views are derived from the same published canonical assignments.
+
+### Version Lifecycle
+Batch 5 lifecycle states:
+- `candidate`
+- `under_review`
+- `approved`
+- `published`
+- `superseded`
+- `cancelled`
+
+Transition rules:
+- `candidate -> under_review`
+- `under_review -> approved`
+- `approved -> published`
+- `candidate/under_review/approved -> cancelled`
+
+`candidate -> published` direct transition is not allowed.
+Published assignments are immutable. A timetable change creates a new candidate/version.
+
+### Human Authority
+Leadership access remains tenant-scoped.
+
+Principal-only actions:
+- approve timetable version
+- publish timetable version
+
+School admin may continue read and preparation actions under leadership policy, but final approval/publication stays principal-only in Batch 5.
+
+### Candidate Materialization Security
+Materialization route:
+- `POST /leadership/timetable-generation/configurations/{configuration_id}/versions/from-candidate`
+
+The server does not trust client assignment payloads. It:
+- rebuilds scheduling problem
+- verifies expected problem fingerprint
+- deterministically regenerates transient candidates
+- finds the requested candidate by `candidate_id`
+- persists only server-produced canonical assignments
+
+If fingerprints do not match, the route returns controlled stale preview conflict (`stale_candidate_preview`).
+
+### Effective-Dated Publication and Supersession
+Batch 5 supports effective-date semantics using half-open operational intervals:
+- conceptual interval: `[effective_from, effective_until)`
+
+When publishing a successor version:
+- previous overlapping published version is closed at successor `effective_from`
+- previous version is marked `superseded`
+- historical assignments remain immutable and queryable
+
+Operational lookup is by tenant + timetable scope + date, not by latest created version.
+
+### Repair Baseline Integration
+Generation configuration now supports canonical baseline reference via:
+- `baseline_timetable_version_id`
+
+Repair problem building can load real persisted baseline assignments from immutable timetable versions and normalize them into the existing scheduling-problem baseline contract.
+
+The CP-SAT solver remains DB-independent.
+
+### Repair Impact Preview
+Leadership impact preview route:
+- `POST /leadership/timetable-generation/configurations/{configuration_id}/repair/impact-preview`
+
+Returns deterministic classification counts and affected entities:
+- directly affected
+- conditionally movable
+- protected
+- manually locked
+
+Scope levels supported:
+- `minimum`
+- `affected_entities`
+- `grade`
+- `whole_school`
+
+No silent scope expansion is performed.
+
+### Version Diff
+Leadership diff route:
+- `GET /leadership/timetable-generation/timetable-versions/{version_id}/diff/{other_version_id}`
+
+Diff compares immutable snapshots by stable canonical assignment identity and reports:
+- moved period/span
+- teacher changes
+- room changes
+- added/removed occurrences
+- class-facing parallel block movement
+- unchanged percentage
+
+Multi-period sessions are preserved as one occurrence with occupied span.
+Parallel block context is preserved for class-facing interpretation.
+
+### Additional Leadership Routes
+- `GET /leadership/timetable-generation/timetables`
+- `GET /leadership/timetable-generation/timetables/{timetable_id}`
+- `GET /leadership/timetable-generation/timetables/{timetable_id}/versions`
+- `GET /leadership/timetable-generation/timetable-versions/{version_id}`
+- `POST /leadership/timetable-generation/timetable-versions/{version_id}/submit`
+- `POST /leadership/timetable-generation/timetable-versions/{version_id}/approve`
+- `POST /leadership/timetable-generation/timetable-versions/{version_id}/publish`
+- `POST /leadership/timetable-generation/timetable-versions/{version_id}/cancel`
+- `GET /leadership/timetable-generation/timetables/{timetable_id}/effective-version?on=YYYY-MM-DD`
+
+### Explicit Non-Actions in Batch 5
+Batch 5 does not:
+- send teacher/parent/student notifications
+- add frontend timetable UI
+- create student-level scheduling
+- allow agent autonomous approve/publish actions
+
 Department lock target remains unsupported in lock normalization.
 
 Teacher preference strengths remain symbolic:

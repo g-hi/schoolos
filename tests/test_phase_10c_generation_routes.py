@@ -35,6 +35,18 @@ REQUIRED_GENERATION_ROUTES = {
     "/leadership/timetable-generation/parallel-blocks/{block_id}/deactivate": {"post"},
     "/leadership/timetable-generation/configurations/{configuration_id}/summary": {"get"},
     "/leadership/timetable-generation/configurations/{configuration_id}/candidates/preview": {"post"},
+    "/leadership/timetable-generation/timetables": {"get"},
+    "/leadership/timetable-generation/timetables/{timetable_id}": {"get"},
+    "/leadership/timetable-generation/timetables/{timetable_id}/versions": {"get"},
+    "/leadership/timetable-generation/timetable-versions/{version_id}": {"get"},
+    "/leadership/timetable-generation/configurations/{configuration_id}/versions/from-candidate": {"post"},
+    "/leadership/timetable-generation/configurations/{configuration_id}/repair/impact-preview": {"post"},
+    "/leadership/timetable-generation/timetable-versions/{version_id}/submit": {"post"},
+    "/leadership/timetable-generation/timetable-versions/{version_id}/approve": {"post"},
+    "/leadership/timetable-generation/timetable-versions/{version_id}/publish": {"post"},
+    "/leadership/timetable-generation/timetable-versions/{version_id}/cancel": {"post"},
+    "/leadership/timetable-generation/timetable-versions/{version_id}/diff/{other_version_id}": {"get"},
+    "/leadership/timetable-generation/timetables/{timetable_id}/effective-version": {"get"},
 }
 
 

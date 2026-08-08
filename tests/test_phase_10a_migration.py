@@ -6,7 +6,7 @@ def test_phase_10a_migration_head_and_chain() -> None:
     script = ScriptDirectory.from_config(Config("alembic.ini"))
     heads = script.get_heads()
 
-    assert heads == ["c3d9a7b2e410"]
+    assert heads == ["e7b1c9d4a2f0"]
 
     revision_chain = {
         revision.revision

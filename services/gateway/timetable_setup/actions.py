@@ -359,6 +359,110 @@ def list_constraints(*, policy_set_id: uuid.UUID) -> dict:
     return {"action": "list_constraints", "policy_set_id": str(policy_set_id), "safe": True}
 
 
+def inspect_timetable_version(*, version_id: uuid.UUID) -> dict:
+    return {
+        "action": "inspect_timetable_version",
+        "version_id": str(version_id),
+        "safe": True,
+        "note": "Read-only timetable version details and immutable assignment snapshot metadata.",
+    }
+
+
+def list_timetable_versions(*, timetable_id: uuid.UUID) -> dict:
+    return {
+        "action": "list_timetable_versions",
+        "timetable_id": str(timetable_id),
+        "safe": True,
+        "note": "Read-only list of timetable versions with lifecycle and effective-date summaries.",
+    }
+
+
+def explain_version_diff(*, left_version_id: uuid.UUID, right_version_id: uuid.UUID) -> dict:
+    return {
+        "action": "explain_version_diff",
+        "left_version_id": str(left_version_id),
+        "right_version_id": str(right_version_id),
+        "safe": True,
+        "note": "Read-only canonical occurrence diff summary and explainability payload.",
+    }
+
+
+def explain_repair_impact(*, configuration_id: uuid.UUID) -> dict:
+    return {
+        "action": "explain_repair_impact",
+        "configuration_id": str(configuration_id),
+        "safe": True,
+        "note": "Read-only repair impact preview classification.",
+    }
+
+
+def inspect_effective_timetable_version(*, timetable_id: uuid.UUID, on_date: date_type) -> dict:
+    return {
+        "action": "inspect_effective_timetable_version",
+        "timetable_id": str(timetable_id),
+        "on_date": on_date.isoformat(),
+        "safe": True,
+        "note": "Read-only effective-date timetable version resolution.",
+    }
+
+
+def explain_supersession(*, version_id: uuid.UUID) -> dict:
+    return {
+        "action": "explain_supersession",
+        "version_id": str(version_id),
+        "safe": True,
+        "note": "Read-only supersession chain and effective-window explanation.",
+    }
+
+
+def explain_publication_readiness(*, version_id: uuid.UUID) -> dict:
+    return {
+        "action": "explain_publication_readiness",
+        "version_id": str(version_id),
+        "safe": True,
+        "note": "Read-only publication readiness checks; no operational state changes.",
+    }
+
+
+def propose_repair_scope_expansion(*, configuration_id: uuid.UUID, from_scope: str, to_scope: str) -> dict:
+    return {
+        "action": "propose_repair_scope_expansion",
+        "configuration_id": str(configuration_id),
+        "from_scope": from_scope,
+        "to_scope": to_scope,
+        "safe": True,
+        "note": "Proposal only. Scope expansion requires explicit human approval.",
+    }
+
+
+def propose_candidate_for_review(*, version_id: uuid.UUID) -> dict:
+    return {
+        "action": "propose_candidate_for_review",
+        "version_id": str(version_id),
+        "safe": True,
+        "note": "Proposal only. Submission remains a human workflow action.",
+    }
+
+
+def propose_effective_date(*, version_id: uuid.UUID, effective_from: date_type) -> dict:
+    return {
+        "action": "propose_effective_date",
+        "version_id": str(version_id),
+        "effective_from": effective_from.isoformat(),
+        "safe": True,
+        "note": "Proposal only. Publication remains principal-authorized.",
+    }
+
+
+def propose_lock_revision(*, lock_id: uuid.UUID) -> dict:
+    return {
+        "action": "propose_lock_revision",
+        "lock_id": str(lock_id),
+        "safe": True,
+        "note": "Proposal only. Manual hard-lock removal remains human-controlled.",
+    }
+
+
 def get_constraint(*, constraint_id: uuid.UUID) -> dict:
     return {"action": "get_constraint", "constraint_id": str(constraint_id), "safe": True}
 

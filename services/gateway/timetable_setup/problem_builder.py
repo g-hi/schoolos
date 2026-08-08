@@ -50,6 +50,8 @@ from shared.db.models import (
     TimetableParallelLessonChild,
     TimetableTeacherSchedulingPreference,
     TimetablePolicyConstraint,
+    TimetableVersion,
+    TimetableVersionAssignment,
     User,
     WeeklyTeachingRequirement,
 )
@@ -72,6 +74,14 @@ REPAIR_DEFAULT_OBJECTIVES: tuple[tuple[str, str], ...] = (
 
 ALLOWED_LOCK_STATES = {"locked", "prefer_to_keep", "flexible"}
 ALLOWED_LOCK_TARGET_TYPES = {"session_reference", "teacher", "class", "subject", "grade", "room", "day", "period", "period_range"}
+
+
+class BaselineAssignmentRow(dict):
+    def __getattr__(self, key: str) -> Any:
+        try:
+            return self[key]
+        except KeyError as exc:
+            raise AttributeError(key) from exc
 
 
 class SchedulingProblemBuildError(Exception):
@@ -304,6 +314,34 @@ async def _load_generation_rows(db: AsyncSession, tenant_id: uuid.UUID, configur
             )
         )
     ).scalars().all()
+
+    baseline_version_id = getattr(configuration, "baseline_timetable_version_id", None)
+    if baseline_version_id is None and configuration.baseline_reference_type == "timetable_version" and configuration.baseline_reference_id is not None:
+        baseline_version_id = configuration.baseline_reference_id
+
+    baseline_version = None
+    baseline_assignments: list[TimetableVersionAssignment] = []
+    if baseline_version_id is not None:
+        baseline_version = await db.scalar(
+            select(TimetableVersion).where(
+                TimetableVersion.id == baseline_version_id,
+                TimetableVersion.tenant_id == tenant_id,
+            )
+        )
+        if baseline_version is not None:
+            baseline_assignments = (
+                await db.execute(
+                    select(TimetableVersionAssignment)
+                    .where(
+                        TimetableVersionAssignment.tenant_id == tenant_id,
+                        TimetableVersionAssignment.timetable_version_id == baseline_version.id,
+                    )
+                    .order_by(TimetableVersionAssignment.assignment_key.asc())
+                )
+            ).scalars().all()
+
+    rows["baseline_version"] = baseline_version
+    rows["baseline_assignments"] = baseline_assignments
 
     return rows
 
@@ -711,18 +749,73 @@ def _build_from_sources(
     if not generation_allowed:
         blockers.append(ProblemIssue(code="phase_10b_generation_blocked", message="Phase 10B readiness gate does not allow scheduling generation.", severity="blocker"))
 
+    baseline_reference_id = getattr(configuration, "baseline_timetable_version_id", None) or configuration.baseline_reference_id
+    baseline_reference_type = configuration.baseline_reference_type or ("timetable_version" if baseline_reference_id else None)
+    baseline_version: TimetableVersion | None = rows.get("baseline_version")
+    baseline_assignments: list[TimetableVersionAssignment] = rows.get("baseline_assignments", [])
+
+    baseline_supported = bool(
+        baseline_reference_id is not None
+        and baseline_version is not None
+        and baseline_version.tenant_id == configuration.tenant_id
+        and baseline_version.lifecycle_status in {"published", "superseded"}
+        and baseline_version.generation_mode in {"standard", "customized", "repair"}
+        and baseline_version.timetable_id is not None
+        and baseline_assignments
+    )
+
+    baseline_rows: list[dict[str, Any]] = []
+    if baseline_supported:
+        for item in baseline_assignments:
+            baseline_rows.append(
+                BaselineAssignmentRow(
+                    {
+                        "assignment_key": item.assignment_key,
+                        "occurrence_id": item.occurrence_id,
+                        "requirement_id": item.requirement_id,
+                        "class_id": item.class_id,
+                        "subject_id": item.subject_id,
+                        "teacher_id": item.teacher_id,
+                        "room_id": item.room_id,
+                        "day_key": item.day_key,
+                        "period_key": item.period_key,
+                        "periods_per_session": int(item.periods_per_session),
+                        "occupied_period_keys": list(item.occupied_period_keys_json or []),
+                        "parallel_block_id": item.parallel_block_id,
+                        "parallel_child_id": item.parallel_child_id,
+                        "fixed": bool(item.fixed),
+                        "lock_state": item.lock_state,
+                        "provenance": {
+                            "baseline_version_id": str(item.timetable_version_id),
+                            "source": "phase_10c_batch5_canonical_baseline",
+                        },
+                    }
+                )
+            )
+
     baseline = BaselineSummary(
-        supported=False,
-        reason="Published timetable baseline versioning is not yet implemented in canonical persistence.",
-        baseline_reference_type=configuration.baseline_reference_type,
-        baseline_reference_id=_serialize_uuid(configuration.baseline_reference_id),
-        assignments=tuple(),
+        supported=baseline_supported,
+        reason="canonical_timetable_version" if baseline_supported else "baseline_not_available",
+        baseline_reference_type=baseline_reference_type,
+        baseline_reference_id=_serialize_uuid(baseline_reference_id),
+        assignments=tuple(baseline_rows),
     )
     if configuration.generation_mode == "repair":
-        if configuration.baseline_reference_id is None:
+        if baseline_reference_id is None:
             blockers.append(ProblemIssue(code="repair_requires_baseline", message="Repair mode requires baseline_reference_id.", severity="blocker"))
-        else:
-            blockers.append(ProblemIssue(code="repair_baseline_not_supported", message="Repair baseline normalization is not yet available because no canonical published timetable baseline model exists.", severity="blocker"))
+        elif baseline_version is None:
+            blockers.append(ProblemIssue(code="repair_baseline_not_found", message="Configured canonical repair baseline version was not found in tenant scope.", severity="blocker"))
+        elif baseline_version.lifecycle_status not in {"published", "superseded"}:
+            blockers.append(ProblemIssue(code="repair_baseline_invalid_status", message="Repair baseline must be an immutable published or superseded timetable version.", severity="blocker"))
+        if baseline_version is not None:
+            if baseline_version.tenant_id != configuration.tenant_id:
+                blockers.append(ProblemIssue(code="repair_baseline_cross_tenant", message="Repair baseline version is outside tenant scope.", severity="blocker"))
+            if baseline_version.generation_mode not in {"standard", "customized", "repair"}:
+                blockers.append(ProblemIssue(code="repair_baseline_invalid_mode", message="Repair baseline version has unsupported generation mode.", severity="blocker"))
+            if baseline_version.timetable_id is None:
+                blockers.append(ProblemIssue(code="repair_baseline_invalid_scope", message="Repair baseline version has no timetable scope.", severity="blocker"))
+        if baseline_version is not None and not baseline_rows:
+            blockers.append(ProblemIssue(code="repair_baseline_assignments_missing", message="Repair baseline version has no canonical assignments.", severity="blocker"))
 
     objectives = _objective_records(configuration, rows["objectives"])
     if configuration.generation_mode == "repair" and not any(item.objective_key in {"minimize_timetable_disruption", "preserve_existing_assignments"} for item in objectives):

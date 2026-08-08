@@ -1428,6 +1428,7 @@ class TimetableGenerationConfiguration(Base):
     lifecycle_status: Mapped[str] = mapped_column(String(30), nullable=False, server_default="draft", index=True)
     baseline_reference_type: Mapped[str | None] = mapped_column(String(40), nullable=True)
     baseline_reference_id: Mapped[uuid.UUID | None] = mapped_column(UUID(as_uuid=True), nullable=True, index=True)
+    baseline_timetable_version_id: Mapped[uuid.UUID | None] = mapped_column(UUID(as_uuid=True), ForeignKey("timetable_versions.id", ondelete="SET NULL"), nullable=True, index=True)
     effective_start_date: Mapped[date_type | None] = mapped_column(Date, nullable=True)
     effective_end_date: Mapped[date_type | None] = mapped_column(Date, nullable=True)
     objective_priorities_json: Mapped[dict] = mapped_column(JSON, nullable=False, default=dict)
@@ -1470,7 +1471,7 @@ class TimetableGenerationConfiguration(Base):
         ),
         CheckConstraint("version_number > 0", name="ck_timetable_generation_configurations_version_positive"),
         CheckConstraint(
-            "generation_mode <> 'repair' OR baseline_reference_id IS NOT NULL",
+            "generation_mode <> 'repair' OR baseline_reference_id IS NOT NULL OR baseline_timetable_version_id IS NOT NULL",
             name="ck_timetable_generation_configurations_repair_baseline_required",
         ),
         Index(
@@ -1481,6 +1482,118 @@ class TimetableGenerationConfiguration(Base):
             "campus_id",
             "lifecycle_status",
         ),
+    )
+
+
+class Timetable(Base):
+    __tablename__ = "timetables"
+
+    id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    tenant_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), ForeignKey("tenants.id", ondelete="CASCADE"), nullable=False, index=True)
+    academic_year_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), ForeignKey("academic_years.id", ondelete="RESTRICT"), nullable=False, index=True)
+    term_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), ForeignKey("terms.id", ondelete="RESTRICT"), nullable=False, index=True)
+    campus_id: Mapped[uuid.UUID | None] = mapped_column(UUID(as_uuid=True), ForeignKey("campuses.id", ondelete="SET NULL"), nullable=True, index=True)
+    name: Mapped[str] = mapped_column(String(160), nullable=False)
+    status: Mapped[str] = mapped_column(String(30), nullable=False, server_default="active", index=True)
+    created_by_user_id: Mapped[uuid.UUID | None] = mapped_column(UUID(as_uuid=True), ForeignKey("users.id", ondelete="SET NULL"), nullable=True)
+    is_active: Mapped[bool] = mapped_column(Boolean, nullable=False, server_default="true")
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, server_default=func.now())
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, server_default=func.now(), onupdate=func.now())
+
+    __table_args__ = (
+        CheckConstraint("status IN ('active','archived')", name="ck_timetables_status"),
+        UniqueConstraint("tenant_id", "academic_year_id", "term_id", "campus_id", name="uq_timetables_scope"),
+        Index("ix_timetables_scope", "tenant_id", "academic_year_id", "term_id", "campus_id", "status"),
+    )
+
+
+class TimetableVersion(Base):
+    __tablename__ = "timetable_versions"
+
+    id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    timetable_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), ForeignKey("timetables.id", ondelete="CASCADE"), nullable=False, index=True)
+    tenant_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), ForeignKey("tenants.id", ondelete="CASCADE"), nullable=False, index=True)
+    version_number: Mapped[int] = mapped_column(Integer, nullable=False)
+    generation_configuration_id: Mapped[uuid.UUID | None] = mapped_column(UUID(as_uuid=True), ForeignKey("timetable_generation_configurations.id", ondelete="SET NULL"), nullable=True, index=True)
+    source_candidate_id: Mapped[str | None] = mapped_column(String(80), nullable=True, index=True)
+    source_problem_id: Mapped[str | None] = mapped_column(String(120), nullable=True)
+    source_problem_fingerprint: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    source_assignment_fingerprint: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    generation_mode: Mapped[str] = mapped_column(String(30), nullable=False, server_default="standard", index=True)
+    baseline_version_id: Mapped[uuid.UUID | None] = mapped_column(UUID(as_uuid=True), ForeignKey("timetable_versions.id", ondelete="SET NULL"), nullable=True, index=True)
+    lifecycle_status: Mapped[str] = mapped_column(String(30), nullable=False, server_default="candidate", index=True)
+    effective_from: Mapped[date_type | None] = mapped_column(Date, nullable=True, index=True)
+    effective_until: Mapped[date_type | None] = mapped_column(Date, nullable=True, index=True)
+    submitted_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    submitted_by_user_id: Mapped[uuid.UUID | None] = mapped_column(UUID(as_uuid=True), ForeignKey("users.id", ondelete="SET NULL"), nullable=True)
+    approved_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    approved_by_user_id: Mapped[uuid.UUID | None] = mapped_column(UUID(as_uuid=True), ForeignKey("users.id", ondelete="SET NULL"), nullable=True)
+    published_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    published_by_user_id: Mapped[uuid.UUID | None] = mapped_column(UUID(as_uuid=True), ForeignKey("users.id", ondelete="SET NULL"), nullable=True)
+    superseded_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    superseded_by_user_id: Mapped[uuid.UUID | None] = mapped_column(UUID(as_uuid=True), ForeignKey("users.id", ondelete="SET NULL"), nullable=True)
+    superseded_by_version_id: Mapped[uuid.UUID | None] = mapped_column(UUID(as_uuid=True), ForeignKey("timetable_versions.id", ondelete="SET NULL"), nullable=True, index=True)
+    candidate_profile: Mapped[str | None] = mapped_column(String(60), nullable=True)
+    quality_snapshot_json: Mapped[dict] = mapped_column(JSON, nullable=False, default=dict)
+    repair_impact_snapshot_json: Mapped[dict] = mapped_column(JSON, nullable=False, default=dict)
+    diff_summary_snapshot_json: Mapped[dict] = mapped_column(JSON, nullable=False, default=dict)
+    solver_provenance_json: Mapped[dict] = mapped_column(JSON, nullable=False, default=dict)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, server_default=func.now(), index=True)
+    created_by_user_id: Mapped[uuid.UUID | None] = mapped_column(UUID(as_uuid=True), ForeignKey("users.id", ondelete="SET NULL"), nullable=True)
+
+    __table_args__ = (
+        CheckConstraint("version_number > 0", name="ck_timetable_versions_version_positive"),
+        CheckConstraint(
+            "generation_mode IN ('standard','customized','repair')",
+            name="ck_timetable_versions_generation_mode",
+        ),
+        CheckConstraint(
+            "lifecycle_status IN ('candidate','under_review','approved','published','superseded','cancelled')",
+            name="ck_timetable_versions_lifecycle_status",
+        ),
+        CheckConstraint(
+            "effective_until IS NULL OR effective_from IS NULL OR effective_until >= effective_from",
+            name="ck_timetable_versions_effective_date_range",
+        ),
+        UniqueConstraint("timetable_id", "version_number", name="uq_timetable_versions_timetable_version_number"),
+        Index("ix_timetable_versions_scope", "tenant_id", "timetable_id", "lifecycle_status", "effective_from", "effective_until"),
+    )
+
+
+class TimetableVersionAssignment(Base):
+    __tablename__ = "timetable_version_assignments"
+
+    id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    tenant_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), ForeignKey("tenants.id", ondelete="CASCADE"), nullable=False, index=True)
+    timetable_version_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), ForeignKey("timetable_versions.id", ondelete="CASCADE"), nullable=False, index=True)
+    occurrence_id: Mapped[str] = mapped_column(String(180), nullable=False)
+    requirement_id: Mapped[str | None] = mapped_column(String(180), nullable=True)
+    class_id: Mapped[str] = mapped_column(String(120), nullable=False, index=True)
+    subject_id: Mapped[str | None] = mapped_column(String(120), nullable=True)
+    teacher_id: Mapped[str | None] = mapped_column(String(120), nullable=True, index=True)
+    room_id: Mapped[str | None] = mapped_column(String(120), nullable=True, index=True)
+    day_key: Mapped[str] = mapped_column(String(20), nullable=False, index=True)
+    period_key: Mapped[str] = mapped_column(String(20), nullable=False)
+    periods_per_session: Mapped[int] = mapped_column(Integer, nullable=False, server_default="1")
+    occupied_period_keys_json: Mapped[list] = mapped_column(JSON, nullable=False, default=list)
+    parallel_block_id: Mapped[str | None] = mapped_column(String(120), nullable=True, index=True)
+    parallel_child_id: Mapped[str | None] = mapped_column(String(120), nullable=True)
+    fixed: Mapped[bool] = mapped_column(Boolean, nullable=False, server_default="false")
+    lock_state: Mapped[str | None] = mapped_column(String(20), nullable=True)
+    protection_snapshot_json: Mapped[dict] = mapped_column(JSON, nullable=False, default=dict)
+    provenance_json: Mapped[dict] = mapped_column(JSON, nullable=False, default=dict)
+    assignment_key: Mapped[str] = mapped_column(String(260), nullable=False)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, server_default=func.now())
+
+    __table_args__ = (
+        CheckConstraint("periods_per_session > 0", name="ck_timetable_version_assignments_periods_per_session_positive"),
+        CheckConstraint(
+            "lock_state IS NULL OR lock_state IN ('locked','prefer_to_keep','flexible')",
+            name="ck_timetable_version_assignments_lock_state",
+        ),
+        UniqueConstraint("timetable_version_id", "assignment_key", name="uq_timetable_version_assignments_version_assignment_key"),
+        Index("ix_timetable_version_assignments_version_class_day", "timetable_version_id", "class_id", "day_key"),
+        Index("ix_timetable_version_assignments_version_teacher_day", "timetable_version_id", "teacher_id", "day_key"),
     )
 
 

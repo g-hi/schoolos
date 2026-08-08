@@ -24,6 +24,7 @@ def _base_configuration(*, mode: str = "standard") -> SimpleNamespace:
         stability_mode="balanced",
         baseline_reference_type="timetable_version" if mode == "repair" else None,
         baseline_reference_id=_uid("baseline") if mode == "repair" else None,
+        baseline_timetable_version_id=None,
         lifecycle_status="approved",
         repair_scope_json={"scope_level": "minimum"},
         validation_summary_json={"is_valid": True},

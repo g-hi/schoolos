@@ -8,6 +8,7 @@ REQUIRED_PROBLEM_ROUTES = {
     "/leadership/timetable-generation/configurations/{configuration_id}/problem/summary": {"get"},
     "/leadership/timetable-generation/configurations/{configuration_id}/problem/preview": {"post"},
     "/leadership/timetable-generation/configurations/{configuration_id}/candidates/preview": {"post"},
+    "/leadership/timetable-generation/configurations/{configuration_id}/repair/impact-preview": {"post"},
 }
 
 

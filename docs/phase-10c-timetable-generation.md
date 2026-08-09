@@ -560,6 +560,51 @@ Performance approach:
 - use in-memory maps for normalization
 - avoid audit/PDF/import-history payloads for problem construction
 
+## Phase 10C Batch 6: Principal Timetable Generation and Operations Workspace
+
+### Scope Added
+Batch 6 delivers the principal-facing operations workspace at:
+- `/leadership/timetable`
+
+The workspace consumes existing Batch 4/5 backend contracts and does not redesign solver behavior or duplicate backend business logic in the frontend.
+
+### Leadership Workflow Coverage
+Implemented in one route workspace:
+- readiness/status summary for selected generation configuration
+- mode controls (`standard`, `customized`, `repair`) with policy-safe explanations
+- principal-entered preference and lock visibility with symbolic strengths/states
+- repair impact preview with explicit scope selection and no silent scope expansion
+- transient candidate preview and comparison rendering
+- candidate selection and materialization into canonical timetable version
+- lifecycle operations (`submit`, `approve`, `publish`, `cancel`) with principal-only enforcement for final actions
+- published/effective version context with scheduled future version visibility
+- immutable version history and pairwise diff inspection
+- timetable visual preview across class/teacher/room views, including parallel-block details and multi-period span labels
+
+### API Consumption Contract
+Frontend client calls remain contract-safe and typed under:
+- `frontend/src/lib/timetable-generation-api.ts`
+
+Guardrails preserved:
+- no client-side recomputation of canonical assignment materialization
+- no direct assignment payload trust during version materialization
+- no frontend-only lifecycle authority bypass
+- stale candidate preview conflict surfaced using controlled backend error code (`stale_candidate_preview`)
+
+### Navigation and Access
+- Sidebar entry added for leadership users:
+	- `Timetable Command Centre` -> `/leadership/timetable`
+- Route remains protected by leadership role guard.
+- Final approval/publication controls remain principal-only; school admin remains read/prep constrained.
+
+### Validation Snapshot
+Batch 6 frontend validations executed during implementation:
+- focused suite: timetable workspace API/client/sidebar tests pass
+- full frontend suite: passed (`39` files, `233` tests)
+- frontend production build: passed
+
+Repository-wide lint currently reports pre-existing issues outside Batch 6 scope; no additional migration was introduced for this batch.
+
 ### API Inspection Routes (Leadership Only)
 Added under existing timetable-generation routes:
 - `POST /leadership/timetable-generation/configurations/{id}/problem/validate`

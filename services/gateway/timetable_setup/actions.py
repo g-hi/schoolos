@@ -359,6 +359,110 @@ def list_constraints(*, policy_set_id: uuid.UUID) -> dict:
     return {"action": "list_constraints", "policy_set_id": str(policy_set_id), "safe": True}
 
 
+def inspect_timetable_version(*, version_id: uuid.UUID) -> dict:
+    return {
+        "action": "inspect_timetable_version",
+        "version_id": str(version_id),
+        "safe": True,
+        "note": "Read-only timetable version details and immutable assignment snapshot metadata.",
+    }
+
+
+def list_timetable_versions(*, timetable_id: uuid.UUID) -> dict:
+    return {
+        "action": "list_timetable_versions",
+        "timetable_id": str(timetable_id),
+        "safe": True,
+        "note": "Read-only list of timetable versions with lifecycle and effective-date summaries.",
+    }
+
+
+def explain_version_diff(*, left_version_id: uuid.UUID, right_version_id: uuid.UUID) -> dict:
+    return {
+        "action": "explain_version_diff",
+        "left_version_id": str(left_version_id),
+        "right_version_id": str(right_version_id),
+        "safe": True,
+        "note": "Read-only canonical occurrence diff summary and explainability payload.",
+    }
+
+
+def explain_repair_impact(*, configuration_id: uuid.UUID) -> dict:
+    return {
+        "action": "explain_repair_impact",
+        "configuration_id": str(configuration_id),
+        "safe": True,
+        "note": "Read-only repair impact preview classification.",
+    }
+
+
+def inspect_effective_timetable_version(*, timetable_id: uuid.UUID, on_date: date_type) -> dict:
+    return {
+        "action": "inspect_effective_timetable_version",
+        "timetable_id": str(timetable_id),
+        "on_date": on_date.isoformat(),
+        "safe": True,
+        "note": "Read-only effective-date timetable version resolution.",
+    }
+
+
+def explain_supersession(*, version_id: uuid.UUID) -> dict:
+    return {
+        "action": "explain_supersession",
+        "version_id": str(version_id),
+        "safe": True,
+        "note": "Read-only supersession chain and effective-window explanation.",
+    }
+
+
+def explain_publication_readiness(*, version_id: uuid.UUID) -> dict:
+    return {
+        "action": "explain_publication_readiness",
+        "version_id": str(version_id),
+        "safe": True,
+        "note": "Read-only publication readiness checks; no operational state changes.",
+    }
+
+
+def propose_repair_scope_expansion(*, configuration_id: uuid.UUID, from_scope: str, to_scope: str) -> dict:
+    return {
+        "action": "propose_repair_scope_expansion",
+        "configuration_id": str(configuration_id),
+        "from_scope": from_scope,
+        "to_scope": to_scope,
+        "safe": True,
+        "note": "Proposal only. Scope expansion requires explicit human approval.",
+    }
+
+
+def propose_candidate_for_review(*, version_id: uuid.UUID) -> dict:
+    return {
+        "action": "propose_candidate_for_review",
+        "version_id": str(version_id),
+        "safe": True,
+        "note": "Proposal only. Submission remains a human workflow action.",
+    }
+
+
+def propose_effective_date(*, version_id: uuid.UUID, effective_from: date_type) -> dict:
+    return {
+        "action": "propose_effective_date",
+        "version_id": str(version_id),
+        "effective_from": effective_from.isoformat(),
+        "safe": True,
+        "note": "Proposal only. Publication remains principal-authorized.",
+    }
+
+
+def propose_lock_revision(*, lock_id: uuid.UUID) -> dict:
+    return {
+        "action": "propose_lock_revision",
+        "lock_id": str(lock_id),
+        "safe": True,
+        "note": "Proposal only. Manual hard-lock removal remains human-controlled.",
+    }
+
+
 def get_constraint(*, constraint_id: uuid.UUID) -> dict:
     return {"action": "get_constraint", "constraint_id": str(constraint_id), "safe": True}
 
@@ -482,6 +586,324 @@ def approve_exception(*, exception_id: uuid.UUID) -> dict:
 
 def revoke_exception(*, exception_id: uuid.UUID) -> dict:
     return {"action": "revoke_exception", "exception_id": str(exception_id), "requires_human_authorization": True}
+
+
+def inspect_generation_configuration(*, configuration_id: uuid.UUID) -> dict:
+    return {"action": "inspect_generation_configuration", "configuration_id": str(configuration_id), "safe": True}
+
+
+def summarize_generation_controls(*, configuration_id: uuid.UUID) -> dict:
+    return {
+        "action": "summarize_generation_controls",
+        "configuration_id": str(configuration_id),
+        "safe": True,
+        "note": "Read-only summary of generation controls and readiness.",
+    }
+
+
+def list_teacher_scheduling_preferences() -> dict:
+    return {"action": "list_teacher_scheduling_preferences", "safe": True}
+
+
+def explain_teacher_preference_strength(*, strength: str) -> dict:
+    return {
+        "action": "explain_teacher_preference_strength",
+        "strength": strength,
+        "safe": True,
+    }
+
+
+def list_timetable_locks(*, configuration_id: uuid.UUID) -> dict:
+    return {"action": "list_timetable_locks", "configuration_id": str(configuration_id), "safe": True}
+
+
+def explain_repair_scope(*, configuration_id: uuid.UUID) -> dict:
+    return {
+        "action": "explain_repair_scope",
+        "configuration_id": str(configuration_id),
+        "safe": True,
+    }
+
+
+def list_parallel_lesson_blocks() -> dict:
+    return {"action": "list_parallel_lesson_blocks", "safe": True}
+
+
+def explain_parallel_block(*, block_id: uuid.UUID) -> dict:
+    return {"action": "explain_parallel_block", "block_id": str(block_id), "safe": True}
+
+
+def explain_bell_schedule_effect(*, bell_schedule_id: uuid.UUID) -> dict:
+    return {
+        "action": "explain_bell_schedule_effect",
+        "bell_schedule_id": str(bell_schedule_id),
+        "safe": True,
+        "note": "Explains logical-period vs clock-time impact without mutating timetable assignments.",
+    }
+
+
+def inspect_scheduling_problem_summary(*, configuration_id: uuid.UUID) -> dict:
+    return {
+        "action": "inspect_scheduling_problem_summary",
+        "configuration_id": str(configuration_id),
+        "safe": True,
+        "note": "Read-only summary of normalized scheduling inputs and solver eligibility gate.",
+    }
+
+
+def explain_problem_build_blockers(*, configuration_id: uuid.UUID) -> dict:
+    return {
+        "action": "explain_problem_build_blockers",
+        "configuration_id": str(configuration_id),
+        "safe": True,
+        "note": "Read-only explanation of deterministic build blockers and warnings.",
+    }
+
+
+def summarize_scheduling_inputs(*, configuration_id: uuid.UUID) -> dict:
+    return {
+        "action": "summarize_scheduling_inputs",
+        "configuration_id": str(configuration_id),
+        "safe": True,
+    }
+
+
+def explain_parallel_block_normalization(*, configuration_id: uuid.UUID) -> dict:
+    return {
+        "action": "explain_parallel_block_normalization",
+        "configuration_id": str(configuration_id),
+        "safe": True,
+    }
+
+
+def explain_repair_inputs(*, configuration_id: uuid.UUID) -> dict:
+    return {
+        "action": "explain_repair_inputs",
+        "configuration_id": str(configuration_id),
+        "safe": True,
+    }
+
+
+def explain_lock_inputs(*, configuration_id: uuid.UUID) -> dict:
+    return {
+        "action": "explain_lock_inputs",
+        "configuration_id": str(configuration_id),
+        "safe": True,
+    }
+
+
+def explain_generation_objectives(*, configuration_id: uuid.UUID) -> dict:
+    return {
+        "action": "explain_generation_objectives",
+        "configuration_id": str(configuration_id),
+        "safe": True,
+    }
+
+
+def propose_teacher_scheduling_preference(*, payload: dict) -> dict:
+    return {
+        "action": "propose_teacher_scheduling_preference",
+        "payload": payload,
+        "safe": True,
+        "note": "Proposal only; no automatic approval.",
+    }
+
+
+def propose_generation_override(*, payload: dict) -> dict:
+    return {
+        "action": "propose_generation_override",
+        "payload": payload,
+        "safe": True,
+        "note": "Proposal only; no permanent policy mutation.",
+    }
+
+
+def propose_lock_scope(*, payload: dict) -> dict:
+    return {
+        "action": "propose_lock_scope",
+        "payload": payload,
+        "safe": True,
+    }
+
+
+def propose_repair_scope(*, payload: dict) -> dict:
+    return {
+        "action": "propose_repair_scope",
+        "payload": payload,
+        "safe": True,
+    }
+
+
+def propose_stability_mode(*, stability_mode: str) -> dict:
+    return {
+        "action": "propose_stability_mode",
+        "stability_mode": stability_mode,
+        "safe": True,
+    }
+
+
+def propose_generation_objective_priorities(*, priorities: list[dict]) -> dict:
+    return {
+        "action": "propose_generation_objective_priorities",
+        "priorities": priorities,
+        "safe": True,
+    }
+
+
+def propose_parallel_block_configuration(*, payload: dict) -> dict:
+    return {
+        "action": "propose_parallel_block_configuration",
+        "payload": payload,
+        "safe": True,
+    }
+
+
+def propose_problem_input_correction(*, configuration_id: uuid.UUID, payload: dict) -> dict:
+    return {
+        "action": "propose_problem_input_correction",
+        "configuration_id": str(configuration_id),
+        "payload": payload,
+        "safe": True,
+        "note": "Proposal only; does not mutate canonical setup or policy records.",
+    }
+
+
+def propose_generation_configuration_revision(*, configuration_id: uuid.UUID, payload: dict) -> dict:
+    return {
+        "action": "propose_generation_configuration_revision",
+        "configuration_id": str(configuration_id),
+        "payload": payload,
+        "safe": True,
+    }
+
+
+def propose_lock_adjustment(*, configuration_id: uuid.UUID, payload: dict) -> dict:
+    return {
+        "action": "propose_lock_adjustment",
+        "configuration_id": str(configuration_id),
+        "payload": payload,
+        "safe": True,
+    }
+
+
+def propose_preference_adjustment(*, configuration_id: uuid.UUID, payload: dict) -> dict:
+    return {
+        "action": "propose_preference_adjustment",
+        "configuration_id": str(configuration_id),
+        "payload": payload,
+        "safe": True,
+    }
+
+
+def propose_repair_scope_adjustment(*, configuration_id: uuid.UUID, payload: dict) -> dict:
+    return {
+        "action": "propose_repair_scope_adjustment",
+        "configuration_id": str(configuration_id),
+        "payload": payload,
+        "safe": True,
+    }
+
+
+def override_solver_eligibility(*, configuration_id: uuid.UUID) -> dict:
+    return {
+        "action": "override_solver_eligibility",
+        "configuration_id": str(configuration_id),
+        "requires_human_authorization": True,
+    }
+
+
+def approve_generation_configuration(*, configuration_id: uuid.UUID) -> dict:
+    return {
+        "action": "approve_generation_configuration",
+        "configuration_id": str(configuration_id),
+        "requires_human_authorization": True,
+    }
+
+
+def approve_permanent_policy_change(*, policy_set_id: uuid.UUID) -> dict:
+    return {
+        "action": "approve_permanent_policy_change",
+        "policy_set_id": str(policy_set_id),
+        "requires_human_authorization": True,
+    }
+
+
+def remove_principal_hard_lock(*, lock_id: uuid.UUID) -> dict:
+    return {
+        "action": "remove_principal_hard_lock",
+        "lock_id": str(lock_id),
+        "requires_human_authorization": True,
+    }
+
+
+def start_solver_generation(*, configuration_id: uuid.UUID) -> dict:
+    return {
+        "action": "start_solver_generation",
+        "configuration_id": str(configuration_id),
+        "requires_human_authorization": True,
+    }
+
+
+def inspect_timetable_candidates_preview(*, configuration_id: uuid.UUID) -> dict:
+    return {
+        "action": "inspect_timetable_candidates_preview",
+        "configuration_id": str(configuration_id),
+        "safe": True,
+        "note": "Read-only transient candidate generation and comparison preview.",
+    }
+
+
+def explain_candidate_tradeoffs(*, configuration_id: uuid.UUID) -> dict:
+    return {
+        "action": "explain_candidate_tradeoffs",
+        "configuration_id": str(configuration_id),
+        "safe": True,
+        "note": "Read-only explainability summary for candidate score trade-offs.",
+    }
+
+
+def compare_timetable_candidates(*, configuration_id: uuid.UUID) -> dict:
+    return {
+        "action": "compare_timetable_candidates",
+        "configuration_id": str(configuration_id),
+        "safe": True,
+        "note": "Read-only pairwise comparison of transient candidates.",
+    }
+
+
+def propose_candidate_generation_options(*, configuration_id: uuid.UUID, payload: dict) -> dict:
+    return {
+        "action": "propose_candidate_generation_options",
+        "configuration_id": str(configuration_id),
+        "payload": payload,
+        "safe": True,
+        "note": "Proposal only; no candidate persistence or publication.",
+    }
+
+
+def approve_candidate_selection(*, candidate_id: uuid.UUID) -> dict:
+    return {
+        "action": "approve_candidate_selection",
+        "candidate_id": str(candidate_id),
+        "requires_human_authorization": True,
+        "note": "Human-only decision marker; does not persist timetable in Batch 4.",
+    }
+
+
+def approve_timetable_candidate(*, candidate_id: uuid.UUID) -> dict:
+    return {
+        "action": "approve_timetable_candidate",
+        "candidate_id": str(candidate_id),
+        "requires_human_authorization": True,
+    }
+
+
+def publish_timetable(*, timetable_version_id: uuid.UUID) -> dict:
+    return {
+        "action": "publish_timetable",
+        "timetable_version_id": str(timetable_version_id),
+        "requires_human_authorization": True,
+    }
 
 
 def explain_readiness_blocker(*, blocker_key: str) -> dict:

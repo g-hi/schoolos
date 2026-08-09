@@ -151,7 +151,7 @@ def upgrade() -> None:
 
     op.add_column("timetable_generation_configurations", sa.Column("baseline_timetable_version_id", sa.UUID(), nullable=True))
     op.create_foreign_key(
-        "fk_timetable_generation_configurations_baseline_timetable_version_id",
+        "fk_tt_gen_cfg_baseline_version",
         "timetable_generation_configurations",
         "timetable_versions",
         ["baseline_timetable_version_id"],
@@ -159,7 +159,7 @@ def upgrade() -> None:
         ondelete="SET NULL",
     )
     op.create_index(
-        "ix_timetable_generation_configurations_baseline_timetable_version_id",
+        "ix_tt_gen_cfg_baseline_version_id",
         "timetable_generation_configurations",
         ["baseline_timetable_version_id"],
         unique=False,
@@ -189,9 +189,9 @@ def downgrade() -> None:
         "generation_mode <> 'repair' OR baseline_reference_id IS NOT NULL",
     )
 
-    op.drop_index("ix_timetable_generation_configurations_baseline_timetable_version_id", table_name="timetable_generation_configurations")
+    op.drop_index("ix_tt_gen_cfg_baseline_version_id", table_name="timetable_generation_configurations")
     op.drop_constraint(
-        "fk_timetable_generation_configurations_baseline_timetable_version_id",
+        "fk_tt_gen_cfg_baseline_version",
         "timetable_generation_configurations",
         type_="foreignkey",
     )

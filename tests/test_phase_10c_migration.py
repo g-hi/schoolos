@@ -15,7 +15,11 @@ BATCH5_DOWN_REVISION = "c3d9a7b2e410"
 def test_phase_10c_revision_head_and_down_revision() -> None:
     script = ScriptDirectory.from_config(Config("alembic.ini"))
     heads = script.get_heads()
-    assert heads == [BATCH5_REVISION_ID]
+
+    # Both Phase 10C revisions must be reachable from the current head.
+    chain = {r.revision for r in script.iterate_revisions(heads[0], "base")}
+    assert REVISION_ID in chain
+    assert BATCH5_REVISION_ID in chain
 
     revision = script.get_revision(REVISION_ID)
     assert revision is not None

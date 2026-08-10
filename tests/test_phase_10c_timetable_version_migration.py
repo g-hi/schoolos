@@ -14,13 +14,17 @@ NEW_BASELINE_FK_NAME = "fk_tt_gen_cfg_baseline_version"
 OLD_BASELINE_FK_NAME = "fk_timetable_generation_configurations_baseline_timetable_version_id"
 
 
-def test_batch5_revision_is_linear_head() -> None:
+def test_batch5_revision_is_in_chain() -> None:
     script = ScriptDirectory.from_config(Config("alembic.ini"))
-    assert script.get_heads() == [REVISION_ID]
 
     revision = script.get_revision(REVISION_ID)
     assert revision is not None
     assert revision.down_revision == DOWN_REVISION
+
+    # Phase 10C batch5 must be reachable from the current head.
+    heads = script.get_heads()
+    chain = {r.revision for r in script.iterate_revisions(heads[0], "base")}
+    assert REVISION_ID in chain
 
 
 def test_batch5_migration_declares_timetable_versioning_tables() -> None:

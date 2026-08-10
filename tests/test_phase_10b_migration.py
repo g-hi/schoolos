@@ -14,7 +14,10 @@ CURRENT_HEAD = "e7b1c9d4a2f0"
 def test_phase_10b_revision_head_and_down_revision() -> None:
     script = ScriptDirectory.from_config(Config("alembic.ini"))
     heads = script.get_heads()
-    assert heads == [CURRENT_HEAD]
+
+    # The Phase 10B revision must be reachable from the current head.
+    chain = {r.revision for r in script.iterate_revisions(heads[0], "base")}
+    assert REVISION_ID in chain
 
     revision = script.get_revision(REVISION_ID)
     assert revision is not None

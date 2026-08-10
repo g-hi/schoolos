@@ -3,10 +3,16 @@ from alembic.script import ScriptDirectory
 
 
 def test_phase_10a_migration_head_and_chain() -> None:
+    """All Phase 10A and earlier revisions are reachable from the current head.
+
+    The global-head assertion has been removed from this test because each
+    phase's own migration test (e.g. test_phase_10d_migration.py) already
+    asserts that its revision IS the current linear head.  Asserting the
+    head here would require an edit every time a new phase is added, coupling
+    a Phase 10A test to future phases.
+    """
     script = ScriptDirectory.from_config(Config("alembic.ini"))
     heads = script.get_heads()
-
-    assert heads == ["e7b1c9d4a2f0"]
 
     revision_chain = {
         revision.revision

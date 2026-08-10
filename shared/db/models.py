@@ -2643,6 +2643,122 @@ class QuestionResponse(Base):
     )
 
 
+# ─────────────────────────────────────────────────────────────────────────────
+# Phase 10D — Operational Daily Sessions
+# ─────────────────────────────────────────────────────────────────────────────
+
+class OperationalSchoolDay(Base):
+    """
+    Represents the school's operational snapshot for a specific calendar date.
+
+    Identity: one row per (tenant, timetable, school_date).
+
+    timetable_id is the primary operational scope — not the version.
+    If V2 supersedes V1 for the same scope and date, timetable_version_id
+    (provenance) changes but the OSD row identity is preserved.
+
+    is_teaching_day is False for weekends, non-operational weekdays, and dates
+    where an approved calendar event overrides to non_teaching_day.
+    timetable_day_key is the solver-convention key (e.g. 'd0') mapping this
+    date to the correct weekly timetable column.  NULL when not a teaching day.
+    """
+    __tablename__ = "operational_school_days"
+
+    id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    tenant_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), ForeignKey("tenants.id", ondelete="CASCADE"), nullable=False, index=True)
+    timetable_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), ForeignKey("timetables.id", ondelete="CASCADE"), nullable=False, index=True)
+    timetable_version_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), ForeignKey("timetable_versions.id", ondelete="CASCADE"), nullable=False, index=True)
+    campus_id: Mapped[uuid.UUID | None] = mapped_column(UUID(as_uuid=True), ForeignKey("campuses.id", ondelete="SET NULL"), nullable=True, index=True)
+    school_date: Mapped[date_type] = mapped_column(Date, nullable=False, index=True)
+    day_of_week: Mapped[int] = mapped_column(Integer, nullable=False)
+    timetable_day_key: Mapped[str | None] = mapped_column(String(20), nullable=True)
+    bell_schedule_id: Mapped[uuid.UUID | None] = mapped_column(UUID(as_uuid=True), ForeignKey("bell_schedules.id", ondelete="SET NULL"), nullable=True, index=True)
+    is_teaching_day: Mapped[bool] = mapped_column(Boolean, nullable=False, server_default="true", index=True)
+    non_teaching_reason: Mapped[str | None] = mapped_column(String(80), nullable=True)
+    calendar_override_event_id: Mapped[uuid.UUID | None] = mapped_column(UUID(as_uuid=True), ForeignKey("operational_calendar_events.id", ondelete="SET NULL"), nullable=True)
+    calendar_event_version_id: Mapped[uuid.UUID | None] = mapped_column(UUID(as_uuid=True), ForeignKey("calendar_event_versions.id", ondelete="SET NULL"), nullable=True)
+    materialization_status: Mapped[str] = mapped_column(String(20), nullable=False, server_default="pending", index=True)
+    materialized_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    source_fingerprint: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    is_active: Mapped[bool] = mapped_column(Boolean, nullable=False, server_default="true")
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, server_default=func.now())
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, server_default=func.now(), onupdate=func.now())
+
+    __table_args__ = (
+        CheckConstraint("day_of_week >= 0 AND day_of_week <= 6", name="ck_operational_school_days_day_of_week"),
+        CheckConstraint(
+            "materialization_status IN ('pending','complete','stale')",
+            name="ck_operational_school_days_mat_status",
+        ),
+        CheckConstraint(
+            "non_teaching_reason IS NULL OR non_teaching_reason IN ("
+            "'not_operational_weekday','calendar_non_teaching','public_holiday',"
+            "'school_holiday','cancelled','other')",
+            name="ck_osd_non_teaching_reason",
+        ),
+        UniqueConstraint("tenant_id", "timetable_id", "school_date", name="uq_operational_school_days_timetable_date"),
+        Index("ix_operational_school_days_tenant_date", "tenant_id", "school_date"),
+    )
+
+
+class DailySession(Base):
+    """
+    One materialized session slot for a specific school date.
+
+    Derived from a TimetableVersionAssignment for the matching timetable_day_key,
+    enriched with resolved bell-schedule clock times.
+
+    class_facing_session_key: deterministic class-facing identity.
+    Ordinary sessions get a unique key per (date, class, period).
+    All parallel children of the same block at the same period share
+    the same class_facing_session_key so that attendance creates only
+    one class register per slot regardless of parallel teacher splits.
+
+    session_status='cancelled' with override_reason='logical_period_unavailable'
+    indicates the logical period does not exist in the effective bell profile.
+    Such sessions must not be attendance-eligible.
+
+    parallel_block_id / parallel_child_id are passed through from canonical
+    assignment data — no subject-name heuristics are applied.
+    """
+    __tablename__ = "daily_sessions"
+
+    id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    tenant_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), ForeignKey("tenants.id", ondelete="CASCADE"), nullable=False, index=True)
+    operational_school_day_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), ForeignKey("operational_school_days.id", ondelete="CASCADE"), nullable=False, index=True)
+    timetable_version_assignment_id: Mapped[uuid.UUID | None] = mapped_column(UUID(as_uuid=True), ForeignKey("timetable_version_assignments.id", ondelete="SET NULL"), nullable=True, index=True)
+    school_date: Mapped[date_type] = mapped_column(Date, nullable=False, index=True)
+    class_id: Mapped[str] = mapped_column(String(120), nullable=False, index=True)
+    subject_id: Mapped[str | None] = mapped_column(String(120), nullable=True)
+    teacher_id: Mapped[str | None] = mapped_column(String(120), nullable=True, index=True)
+    room_id: Mapped[str | None] = mapped_column(String(120), nullable=True)
+    bell_period_id: Mapped[uuid.UUID | None] = mapped_column(UUID(as_uuid=True), ForeignKey("bell_schedule_periods.id", ondelete="SET NULL"), nullable=True)
+    period_number: Mapped[int] = mapped_column(Integer, nullable=False)
+    period_start_time: Mapped[str | None] = mapped_column(String(5), nullable=True)
+    period_end_time: Mapped[str | None] = mapped_column(String(5), nullable=True)
+    periods_span: Mapped[int] = mapped_column(Integer, nullable=False, server_default="1")
+    parallel_block_id: Mapped[str | None] = mapped_column(String(120), nullable=True, index=True)
+    parallel_child_id: Mapped[str | None] = mapped_column(String(120), nullable=True)
+    session_key: Mapped[str] = mapped_column(String(260), nullable=False)
+    class_facing_session_key: Mapped[str | None] = mapped_column(String(64), nullable=True, index=True)
+    session_status: Mapped[str] = mapped_column(String(30), nullable=False, server_default="scheduled", index=True)
+    override_reason: Mapped[str | None] = mapped_column(String(120), nullable=True)
+    is_active: Mapped[bool] = mapped_column(Boolean, nullable=False, server_default="true")
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, server_default=func.now())
+
+    __table_args__ = (
+        CheckConstraint("periods_span > 0", name="ck_daily_sessions_periods_span_positive"),
+        CheckConstraint("period_number > 0", name="ck_daily_sessions_period_number_positive"),
+        CheckConstraint(
+            "session_status IN ('scheduled','cancelled','modified')",
+            name="ck_daily_sessions_session_status",
+        ),
+        UniqueConstraint("tenant_id", "operational_school_day_id", "session_key", name="uq_daily_sessions_osd_session_key"),
+        Index("ix_daily_sessions_tenant_date_class", "tenant_id", "school_date", "class_id"),
+        Index("ix_daily_sessions_tenant_date_teacher", "tenant_id", "school_date", "teacher_id"),
+    )
+
+
 # -- Parent Experience models (Phase 8.1) -------------------------------------
 # Explicit import ensures all parent tables are registered with Base.metadata.
 # Uses a named alias to prevent wildcard import and circular-import risks.

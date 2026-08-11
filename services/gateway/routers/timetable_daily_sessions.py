@@ -1,11 +1,12 @@
-﻿"""Phase 10D - Operational Daily Sessions API."""
+"""Phase 10D - Operational Daily Sessions API."""
 from __future__ import annotations
 
 import uuid
-from datetime import date as date_type
+from datetime import date as date_type, datetime
 
 from fastapi import APIRouter, Depends, HTTPException, Query, status as http_status
 from pydantic import BaseModel, ConfigDict, Field
+from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from services.gateway.ai.audit import log_action
@@ -17,13 +18,26 @@ from services.gateway.timetable_setup.daily_sessions import (
     operational_day_to_dict,
     session_to_dict,
 )
-from shared.auth.dependencies import resolve_authenticated_leadership
+from services.timetable.attendance_registers import (
+    AttendanceError,
+    AttendanceRecord,
+    AttendanceRegister,
+    bulk_mark_attendance,
+    correct_attendance_register,
+    ensure_attendance_register,
+    finalize_attendance_register,
+    mark_all_present,
+    submit_attendance_register,
+)
+from shared.auth.dependencies import resolve_authenticated_leadership, resolve_authenticated_teacher
 from shared.auth.tenant import resolve_tenant
 from shared.db.connection import get_db, set_tenant_context
-from shared.db.models import Tenant, User
+from shared.db.models import DailySession, OperationalSchoolDay, Student, Subject, Teacher, Tenant, User
 
 
 router = APIRouter(prefix="/leadership/operations/daily-sessions", tags=["Daily Sessions"])
+teacher_router = APIRouter(prefix="/teacher/operations/attendance", tags=["Teacher Attendance"])
+leadership_router = APIRouter(prefix="/leadership/operations/attendance", tags=["Leadership Attendance"])
 
 
 def _ensure_principal(actor: User, tenant: Tenant) -> None:
@@ -40,6 +54,382 @@ def _ensure_principal(actor: User, tenant: Tenant) -> None:
             status_code=http_status.HTTP_403_FORBIDDEN,
             detail="Only principals can access daily session operations.",
         )
+
+
+def _ensure_teacher(actor: User, tenant: Tenant) -> None:
+    if not actor.is_active:
+        raise HTTPException(status_code=http_status.HTTP_403_FORBIDDEN, detail="Inactive users cannot access this resource.")
+    if actor.tenant_id != tenant.id:
+        raise HTTPException(
+            status_code=http_status.HTTP_401_UNAUTHORIZED,
+            detail="Invalid or expired token.",
+            headers={"WWW-Authenticate": "Bearer"},
+        )
+    if actor.role != "teacher":
+        raise HTTPException(
+            status_code=http_status.HTTP_403_FORBIDDEN,
+            detail="Only teachers can access teacher attendance operations.",
+        )
+
+
+def _map_attendance_error(exc: AttendanceError) -> tuple[int, dict]:
+    code = exc.code
+    if code == "attendance_authorization_denied":
+        return http_status.HTTP_403_FORBIDDEN, {"code": code, "message": "You are not authorized for this attendance operation."}
+    if code in {"attendance_register_not_found", "session_not_found"}:
+        return http_status.HTTP_404_NOT_FOUND, {"code": code, "message": "The requested attendance resource was not found."}
+    if code in {"attendance_register_not_open", "attendance_register_not_submitted", "attendance_register_not_submit_or_finalized", "attendance_incomplete"}:
+        return http_status.HTTP_409_CONFLICT, {"code": code, "message": exc.detail or code}
+    if code in {"attendance_not_available_for_session", "attendance_roster_stale", "parallel_roster_membership_unresolved"}:
+        return http_status.HTTP_409_CONFLICT, {"code": code, "message": exc.detail or code}
+    if code in {"attendance_unknown_student"}:
+        return http_status.HTTP_422_UNPROCESSABLE_ENTITY, {"code": code, "message": exc.detail or code}
+    if code in {"attendance_status_unknown", "attendance_late_minutes_invalid", "attendance_correction_reason_required"}:
+        return http_status.HTTP_422_UNPROCESSABLE_ENTITY, {"code": code, "message": exc.detail or code}
+    return http_status.HTTP_400_BAD_REQUEST, {"code": code, "message": exc.detail or code}
+
+
+async def _resolve_teacher_profile(*, db: AsyncSession, tenant_id: uuid.UUID, actor_id: uuid.UUID) -> Teacher | None:
+    return await db.scalar(select(Teacher).where(Teacher.tenant_id == tenant_id, Teacher.user_id == actor_id))
+
+
+async def teacher_attendance_view_for_date(
+    db: AsyncSession,
+    *,
+    tenant_id: uuid.UUID,
+    actor_id: uuid.UUID,
+    school_date: date_type,
+) -> list[dict]:
+    """Read-only teacher-facing attendance roster list for a tenant date."""
+    teacher = await _resolve_teacher_profile(db=db, tenant_id=tenant_id, actor_id=actor_id)
+    if teacher is None:
+        raise AttendanceError("attendance_authorization_denied")
+
+    rows = await db.execute(
+        select(DailySession)
+        .where(
+            DailySession.tenant_id == tenant_id,
+            DailySession.school_date == school_date,
+            DailySession.teacher_id == str(teacher.id),
+        )
+    )
+    sessions = rows.scalars().all()
+
+    # Deduplicate on class_facing_session_key because parallel children or multi-
+    # period materializations may surface multiple DailySession rows for one class-facing slot.
+    seen_keys: set[str] = set()
+    payload = []
+    for session in sessions:
+        key = session.class_facing_session_key or session.session_key
+        if key in seen_keys:
+            continue
+        seen_keys.add(key)
+
+        if session.parallel_block_id is not None:
+            status = "parallel_unresolved"
+            eligible = False
+        else:
+            eligible = bool(
+                session.is_active
+                and session.session_status != "cancelled"
+                and session.override_reason != "logical_period_unavailable"
+            )
+            status = "unavailable" if not eligible else "not_started"
+
+        register = await db.scalar(
+            select(AttendanceRegister).where(
+                AttendanceRegister.tenant_id == tenant_id,
+                AttendanceRegister.operational_school_day_id == session.operational_school_day_id,
+                AttendanceRegister.class_facing_session_key == session.class_facing_session_key,
+            )
+        )
+        if register is not None:
+            status = {
+                "open": "open",
+                "submitted": "submitted",
+                "finalized": "finalized",
+            }.get(register.register_status, "not_started")
+            if register.roster_resolution_status == "parallel_unresolved":
+                status = "parallel_unresolved"
+            record_rows = await db.execute(
+                select(AttendanceRecord).where(
+                    AttendanceRecord.tenant_id == tenant_id,
+                    AttendanceRecord.attendance_register_id == register.id,
+                )
+            )
+            records = record_rows.scalars().all()
+            expected_count = register.expected_student_count or len(records)
+            marked_count = sum(1 for r in records if r.attendance_status != "unmarked")
+            unmarked_count = sum(1 for r in records if r.attendance_status == "unmarked")
+            if register.register_status == "open" and marked_count and marked_count < expected_count:
+                status = "incomplete"
+        else:
+            expected_count = 0
+            marked_count = 0
+            unmarked_count = 0
+
+        payload.append(
+            {
+                "daily_session_id": str(session.id),
+                "class_facing_session_key": session.class_facing_session_key,
+                "school_date": school_date.isoformat(),
+                "class_id": session.class_id,
+                "subject_id": session.subject_id,
+                "teacher_id": session.teacher_id,
+                "start_time": session.period_start_time,
+                "end_time": session.period_end_time,
+                "session_status": session.session_status,
+                "attendance_eligible": eligible,
+                "attendance_register_id": str(register.id) if register else None,
+                "attendance_status": status,
+                "expected_count": expected_count,
+                "marked_count": marked_count,
+                "unmarked_count": unmarked_count,
+            }
+        )
+
+    return payload
+
+
+async def teacher_attendance_register_detail(
+    db: AsyncSession,
+    *,
+    tenant_id: uuid.UUID,
+    actor_id: uuid.UUID,
+    register_id: uuid.UUID,
+) -> dict:
+    """Read-only teacher detail view of a single register."""
+    register = await db.scalar(
+        select(AttendanceRegister).where(
+            AttendanceRegister.id == register_id,
+            AttendanceRegister.tenant_id == tenant_id,
+        )
+    )
+    if register is None:
+        raise AttendanceError("attendance_register_not_found")
+
+    teacher = await _resolve_teacher_profile(db=db, tenant_id=tenant_id, actor_id=actor_id)
+    if teacher is None:
+        raise AttendanceError("attendance_authorization_denied")
+
+    record_rows = await db.execute(
+        select(AttendanceRecord)
+        .join(Student, Student.id == AttendanceRecord.student_id)
+        .where(
+            AttendanceRecord.tenant_id == tenant_id,
+            AttendanceRecord.attendance_register_id == register.id,
+        )
+    )
+    records = []
+    for row in record_rows.scalars().all():
+        student = await db.scalar(select(Student).where(Student.id == row.student_id, Student.tenant_id == tenant_id))
+        records.append(
+            {
+                "student_id": str(row.student_id),
+                "student_name": getattr(student, "name", None) or getattr(student, "display_name", None) or str(row.student_id),
+                "student_identifier": getattr(student, "student_number", None) or getattr(student, "identifier", None),
+                "attendance_status": row.attendance_status,
+                "minutes_late": row.minutes_late,
+                "marked_at": row.marked_at.isoformat() if row.marked_at else None,
+            }
+        )
+
+    return {
+        "register_id": str(register.id),
+        "class_facing_session_key": register.class_facing_session_key,
+        "school_date": register.school_date.isoformat(),
+        "register_status": register.register_status,
+        "roster_resolution_status": register.roster_resolution_status,
+        "expected_count": register.expected_student_count,
+        "marked_count": sum(1 for r in records if r["attendance_status"] != "unmarked"),
+        "unmarked_count": sum(1 for r in records if r["attendance_status"] == "unmarked"),
+        "records": records,
+    }
+
+
+async def leadership_daily_attendance_summary(
+    db: AsyncSession,
+    *,
+    tenant_id: uuid.UUID,
+    school_date: date_type,
+) -> dict:
+    """Leadership-only deterministic daily summary read model."""
+    rows = await db.execute(
+        select(DailySession)
+        .where(
+            DailySession.tenant_id == tenant_id,
+            DailySession.school_date == school_date,
+        )
+    )
+    sessions = rows.scalars().all()
+    seen_keys: set[str] = set()
+    eligible = 0
+    not_started = 0
+    open_count = 0
+    submitted = 0
+    finalized = 0
+    parallel = 0
+    expected_students = 0
+    present = 0
+    absent = 0
+    late = 0
+    excused = 0
+    unmarked = 0
+
+    for session in sessions:
+        key = session.class_facing_session_key or session.session_key
+        if key in seen_keys:
+            continue
+        seen_keys.add(key)
+
+        if session.parallel_block_id is not None:
+            parallel += 1
+            continue
+
+        if session.is_active and session.session_status != "cancelled" and session.override_reason != "logical_period_unavailable":
+            eligible += 1
+
+        register = await db.scalar(
+            select(AttendanceRegister).where(
+                AttendanceRegister.tenant_id == tenant_id,
+                AttendanceRegister.operational_school_day_id == session.operational_school_day_id,
+                AttendanceRegister.class_facing_session_key == session.class_facing_session_key,
+            )
+        )
+        if register is None:
+            if session.is_active and session.session_status != "cancelled" and session.override_reason != "logical_period_unavailable":
+                not_started += 1
+            continue
+
+        if register.roster_resolution_status == "parallel_unresolved":
+            parallel += 1
+            continue
+
+        expected_students += register.expected_student_count or 0
+        record_rows = await db.execute(
+            select(AttendanceRecord).where(
+                AttendanceRecord.tenant_id == tenant_id,
+                AttendanceRecord.attendance_register_id == register.id,
+            )
+        )
+        records = record_rows.scalars().all()
+        if register.register_status == "open":
+            open_count += 1
+        elif register.register_status == "submitted":
+            submitted += 1
+        elif register.register_status == "finalized":
+            finalized += 1
+
+        for row in records:
+            if row.attendance_status == "present":
+                present += 1
+            elif row.attendance_status == "absent":
+                absent += 1
+            elif row.attendance_status == "late":
+                late += 1
+            elif row.attendance_status == "excused":
+                excused += 1
+            elif row.attendance_status == "unmarked":
+                unmarked += 1
+
+    return {
+        "school_date": school_date.isoformat(),
+        "eligible_sessions": eligible,
+        "not_started": not_started,
+        "open": open_count,
+        "submitted": submitted,
+        "finalized": finalized,
+        "parallel_unresolved": parallel,
+        "expected_students": expected_students,
+        "present": present,
+        "absent": absent,
+        "late": late,
+        "excused": excused,
+        "unmarked": unmarked,
+    }
+
+
+async def leadership_attendance_register_list(
+    db: AsyncSession,
+    *,
+    tenant_id: uuid.UUID,
+    school_date: date_type,
+) -> list[dict]:
+    rows = await db.execute(
+        select(AttendanceRegister).where(
+            AttendanceRegister.tenant_id == tenant_id,
+            AttendanceRegister.school_date == school_date,
+        )
+    )
+    registers = rows.scalars().all()
+    payload = []
+    for register in registers:
+        record_rows = await db.execute(
+            select(AttendanceRecord).where(
+                AttendanceRecord.tenant_id == tenant_id,
+                AttendanceRecord.attendance_register_id == register.id,
+            )
+        )
+        records = record_rows.scalars().all()
+        payload.append(
+            {
+                "register_id": str(register.id),
+                "class_id": register.class_id,
+                "class_facing_session_key": register.class_facing_session_key,
+                "status": register.register_status,
+                "roster_resolution_status": register.roster_resolution_status,
+                "expected": register.expected_student_count,
+                "marked": sum(1 for r in records if r.attendance_status != "unmarked"),
+                "unmarked": sum(1 for r in records if r.attendance_status == "unmarked"),
+                "present": sum(1 for r in records if r.attendance_status == "present"),
+                "absent": sum(1 for r in records if r.attendance_status == "absent"),
+                "late": sum(1 for r in records if r.attendance_status == "late"),
+                "excused": sum(1 for r in records if r.attendance_status == "excused"),
+            }
+        )
+    return payload
+
+
+async def leadership_attendance_register_detail(
+    db: AsyncSession,
+    *,
+    tenant_id: uuid.UUID,
+    register_id: uuid.UUID,
+) -> dict:
+    register = await db.scalar(
+        select(AttendanceRegister).where(
+            AttendanceRegister.id == register_id,
+            AttendanceRegister.tenant_id == tenant_id,
+        )
+    )
+    if register is None:
+        raise AttendanceError("attendance_register_not_found")
+    record_rows = await db.execute(
+        select(AttendanceRecord).where(
+            AttendanceRecord.tenant_id == tenant_id,
+            AttendanceRecord.attendance_register_id == register.id,
+        )
+    )
+    records = record_rows.scalars().all()
+    return {
+        "register_id": str(register.id),
+        "school_date": register.school_date.isoformat(),
+        "class_id": register.class_id,
+        "class_facing_session_key": register.class_facing_session_key,
+        "register_status": register.register_status,
+        "roster_resolution_status": register.roster_resolution_status,
+        "expected_count": register.expected_student_count,
+        "records": [
+            {
+                "student_id": str(r.student_id),
+                "status": r.attendance_status,
+                "minutes_late": r.minutes_late,
+                "marked_by": str(r.marked_by) if r.marked_by else None,
+                "marked_at": r.marked_at.isoformat() if r.marked_at else None,
+            }
+            for r in records
+        ],
+    }
 
 
 class MaterializeRequest(BaseModel):
@@ -149,3 +539,261 @@ async def get_daily_sessions(
         "operational_school_day": operational_day_to_dict(osd, session_count=len(sessions)),
         "sessions": [session_to_dict(s) for s in sessions],
     }
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Teacher Attendance API surface
+# ─────────────────────────────────────────────────────────────────────────────
+
+@teacher_router.get("/today", summary="Teacher attendance sessions for today")
+async def get_teacher_attendance_today(
+    school_date: date_type | None = Query(None, description="requested date (YYYY-MM-DD)"),
+    tenant: Tenant = Depends(resolve_tenant),
+    actor: User = Depends(resolve_authenticated_teacher),
+    db: AsyncSession = Depends(get_db),
+) -> dict:
+    """Teacher read-only list, defaulting to the current local date when omitted."""
+    await set_tenant_context(db, tenant.id)
+    _ensure_teacher(actor, tenant)
+    ref_date = school_date or datetime.now().date()
+    items = await teacher_attendance_view_for_date(
+        db,
+        tenant_id=tenant.id,
+        actor_id=actor.id,
+        school_date=ref_date,
+    )
+    return {"school_date": ref_date.isoformat(), "items": items}
+
+
+@teacher_router.get("/sessions", summary="Teacher attendance sessions for a requested date")
+async def get_teacher_attendance_sessions(
+    school_date: date_type = Query(..., description="requested date (YYYY-MM-DD)"),
+    tenant: Tenant = Depends(resolve_tenant),
+    actor: User = Depends(resolve_authenticated_teacher),
+    db: AsyncSession = Depends(get_db),
+) -> dict:
+    """Teacher read-only list for a requested operational date."""
+    await set_tenant_context(db, tenant.id)
+    _ensure_teacher(actor, tenant)
+    items = await teacher_attendance_view_for_date(
+        db,
+        tenant_id=tenant.id,
+        actor_id=actor.id,
+        school_date=school_date,
+    )
+    return {"school_date": school_date.isoformat(), "items": items}
+
+
+@teacher_router.post("/registers/ensure", summary="Ensure an attendance register for a teacher session")
+async def teacher_ensure_register(
+    body: dict,
+    tenant: Tenant = Depends(resolve_tenant),
+    actor: User = Depends(resolve_authenticated_teacher),
+    db: AsyncSession = Depends(get_db),
+):
+    await set_tenant_context(db, tenant.id)
+    _ensure_teacher(actor, tenant)
+    daily_session_id = body.get("daily_session_id") if isinstance(body, dict) else body.daily_session_id
+    try:
+        register = await ensure_attendance_register(
+            db,
+            tenant_id=tenant.id,
+            daily_session_id=uuid.UUID(str(daily_session_id)),
+        )
+        return {"register_id": str(register.id), "register_status": register.register_status}
+    except AttendanceError as exc:
+        code, payload = _map_attendance_error(exc)
+        raise HTTPException(status_code=code, detail=payload)
+
+
+@teacher_router.get("/registers/{register_id}", summary="Teacher register detail")
+async def teacher_register_detail(
+    register_id: uuid.UUID,
+    tenant: Tenant = Depends(resolve_tenant),
+    actor: User = Depends(resolve_authenticated_teacher),
+    db: AsyncSession = Depends(get_db),
+) -> dict:
+    await set_tenant_context(db, tenant.id)
+    _ensure_teacher(actor, tenant)
+    try:
+        return await teacher_attendance_register_detail(
+            db,
+            tenant_id=tenant.id,
+            actor_id=actor.id,
+            register_id=register_id,
+        )
+    except AttendanceError as exc:
+        code, payload = _map_attendance_error(exc)
+        raise HTTPException(status_code=code, detail=payload)
+
+
+@teacher_router.post("/registers/{register_id}/bulk-mark", summary="Bulk mark attendance")
+async def teacher_bulk_mark(
+    register_id: uuid.UUID,
+    body: dict,
+    tenant: Tenant = Depends(resolve_tenant),
+    actor: User = Depends(resolve_authenticated_teacher),
+    db: AsyncSession = Depends(get_db),
+):
+    await set_tenant_context(db, tenant.id)
+    _ensure_teacher(actor, tenant)
+    try:
+        register = await bulk_mark_attendance(
+            db,
+            tenant_id=tenant.id,
+            register_id=register_id,
+            actor_id=actor.id,
+            marks=body.get("marks", []) if isinstance(body, dict) else body.marks,
+        )
+        return {"register_id": str(register.id), "register_status": register.register_status}
+    except AttendanceError as exc:
+        code, payload = _map_attendance_error(exc)
+        raise HTTPException(status_code=code, detail=payload)
+
+
+@teacher_router.post("/registers/{register_id}/mark-all-present", summary="Mark all present")
+async def teacher_mark_all_present(
+    register_id: uuid.UUID,
+    tenant: Tenant = Depends(resolve_tenant),
+    actor: User = Depends(resolve_authenticated_teacher),
+    db: AsyncSession = Depends(get_db),
+):
+    await set_tenant_context(db, tenant.id)
+    _ensure_teacher(actor, tenant)
+    try:
+        register = await mark_all_present(
+            db,
+            tenant_id=tenant.id,
+            register_id=register_id,
+            actor_id=actor.id,
+        )
+        return {"register_id": str(register.id), "register_status": register.register_status}
+    except AttendanceError as exc:
+        code, payload = _map_attendance_error(exc)
+        raise HTTPException(status_code=code, detail=payload)
+
+
+@teacher_router.post("/registers/{register_id}/submit", summary="Submit attendance register")
+async def teacher_submit(
+    register_id: uuid.UUID,
+    tenant: Tenant = Depends(resolve_tenant),
+    actor: User = Depends(resolve_authenticated_teacher),
+    db: AsyncSession = Depends(get_db),
+):
+    await set_tenant_context(db, tenant.id)
+    _ensure_teacher(actor, tenant)
+    try:
+        register = await submit_attendance_register(
+            db,
+            tenant_id=tenant.id,
+            register_id=register_id,
+            actor_id=actor.id,
+        )
+        return {"register_id": str(register.id), "register_status": register.register_status}
+    except AttendanceError as exc:
+        code, payload = _map_attendance_error(exc)
+        raise HTTPException(status_code=code, detail=payload)
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Leadership Attendance API surface
+# ─────────────────────────────────────────────────────────────────────────────
+
+@leadership_router.get("/daily-summary", summary="Leadership daily attendance summary")
+async def get_leadership_daily_attendance_summary(
+    school_date: date_type = Query(..., description="Date to summarize"),
+    tenant: Tenant = Depends(resolve_tenant),
+    actor: User = Depends(resolve_authenticated_leadership),
+    db: AsyncSession = Depends(get_db),
+) -> dict:
+    await set_tenant_context(db, tenant.id)
+    _ensure_principal(actor, tenant)
+    return await leadership_daily_attendance_summary(
+        db,
+        tenant_id=tenant.id,
+        school_date=school_date,
+    )
+
+
+@leadership_router.get("/registers", summary="Leadership register inventory for a date")
+async def get_leadership_attendance_registers(
+    school_date: date_type = Query(..., description="Date to summarize"),
+    tenant: Tenant = Depends(resolve_tenant),
+    actor: User = Depends(resolve_authenticated_leadership),
+    db: AsyncSession = Depends(get_db),
+) -> list[dict]:
+    await set_tenant_context(db, tenant.id)
+    _ensure_principal(actor, tenant)
+    return await leadership_attendance_register_list(
+        db,
+        tenant_id=tenant.id,
+        school_date=school_date,
+    )
+
+
+@leadership_router.get("/registers/{register_id}", summary="Leadership register detail")
+async def get_leadership_attendance_register_detail(
+    register_id: uuid.UUID,
+    tenant: Tenant = Depends(resolve_tenant),
+    actor: User = Depends(resolve_authenticated_leadership),
+    db: AsyncSession = Depends(get_db),
+) -> dict:
+    await set_tenant_context(db, tenant.id)
+    _ensure_principal(actor, tenant)
+    try:
+        return await leadership_attendance_register_detail(
+            db,
+            tenant_id=tenant.id,
+            register_id=register_id,
+        )
+    except AttendanceError as exc:
+        code, payload = _map_attendance_error(exc)
+        raise HTTPException(status_code=code, detail=payload)
+
+
+@leadership_router.post("/registers/{register_id}/finalize", summary="Finalize attendance register")
+async def leadership_finalize(
+    register_id: uuid.UUID,
+    tenant: Tenant = Depends(resolve_tenant),
+    actor: User = Depends(resolve_authenticated_leadership),
+    db: AsyncSession = Depends(get_db),
+):
+    await set_tenant_context(db, tenant.id)
+    _ensure_principal(actor, tenant)
+    try:
+        register = await finalize_attendance_register(
+            db,
+            tenant_id=tenant.id,
+            register_id=register_id,
+            actor_id=actor.id,
+        )
+        return {"register_id": str(register.id), "register_status": register.register_status}
+    except AttendanceError as exc:
+        code, payload = _map_attendance_error(exc)
+        raise HTTPException(status_code=code, detail=payload)
+
+
+@leadership_router.post("/registers/{register_id}/correct", summary="Correct a submitted/finalized attendance register")
+async def leadership_correction(
+    register_id: uuid.UUID,
+    body: dict,
+    tenant: Tenant = Depends(resolve_tenant),
+    actor: User = Depends(resolve_authenticated_leadership),
+    db: AsyncSession = Depends(get_db),
+):
+    await set_tenant_context(db, tenant.id)
+    _ensure_principal(actor, tenant)
+    try:
+        record = await correct_attendance_register(
+            db,
+            tenant_id=tenant.id,
+            register_id=register_id,
+            actor_id=actor.id,
+            student_id=body.get("student_id") if isinstance(body, dict) else body.student_id,
+            new_status=body.get("new_status") if isinstance(body, dict) else body.new_status,
+            correction_reason=body.get("correction_reason") if isinstance(body, dict) else body.correction_reason,
+        )
+        return {"student_id": str(record.student_id), "attendance_status": record.attendance_status}
+    except AttendanceError as exc:
+        code, payload = _map_attendance_error(exc)
+        raise HTTPException(status_code=code, detail=payload)

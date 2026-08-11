@@ -35,6 +35,21 @@ class FakeResult:
     def scalars(self):
         return FakeScalarResult(self._rows)
 
+    def all(self):
+        return self._rows
+
+
+def metadata_for(*sessions):
+    classes = {}
+    subjects = {}
+    for session in sessions:
+        classes[session.class_id] = (
+            SimpleNamespace(id=session.class_id, code="G5A", grade="Grade 5", section="A"),
+            SimpleNamespace(name="Grade 5"),
+        )
+        subjects[session.subject_id] = SimpleNamespace(id=session.subject_id, name="Mathematics", tenant_id=uuid.uuid4())
+    return FakeResult(list(classes.values())), FakeResult(list(subjects.values()))
+
 
 class FakeScalarResult:
     def __init__(self, rows):
@@ -187,7 +202,7 @@ async def test_teacher_operational_date_list_filters_teacher_scope_and_scheduled
 
     db = FakeAsyncSession(
         scalar_values=[None, None],
-        execute_values=[FakeResult([session_a])],
+        execute_values=[FakeResult([session_a]), *metadata_for(session_a)],
     )
 
     payload = await teacher_attendance_view_for_date(
@@ -200,6 +215,11 @@ async def test_teacher_operational_date_list_filters_teacher_scope_and_scheduled
     assert len(payload) == 1
     assert payload[0]["daily_session_id"] == str(session_a.id)
     assert payload[0]["attendance_status"] == "not_started"
+    assert payload[0]["class_code"] == "G5A"
+    assert payload[0]["grade_level"] == "Grade 5"
+    assert payload[0]["section"] == "A"
+    assert payload[0]["class_display_name"] == "Grade 5 A"
+    assert payload[0]["subject_name"] == "Mathematics"
 
 
 @pytest.mark.asyncio
@@ -282,7 +302,7 @@ async def test_teacher_attendance_view_deduplicates_class_facing_keys(monkeypatc
 
     db = FakeAsyncSession(
         scalar_values=[None, None, None, None, None],
-        execute_values=[FakeResult([session_a, session_b, session_c, session_d])],
+        execute_values=[FakeResult([session_a, session_b, session_c, session_d]), *metadata_for(session_a, session_c)],
     )
 
     payload = await teacher_attendance_view_for_date(
@@ -354,7 +374,7 @@ async def test_teacher_attendance_view_status_derivation_read_models(monkeypatch
 
     db = FakeAsyncSession(
         scalar_values=[register_open, [SimpleNamespace(attendance_status="present")], register_submitted, [SimpleNamespace(attendance_status="present")], register_finalized, [SimpleNamespace(attendance_status="present")]],
-        execute_values=[FakeResult([session]), FakeResult([SimpleNamespace(attendance_status="present")]), FakeResult([SimpleNamespace(attendance_status="present")]), FakeResult([SimpleNamespace(attendance_status="present")])],
+        execute_values=[FakeResult([session]), *metadata_for(session), FakeResult([SimpleNamespace(attendance_status="present")]), FakeResult([SimpleNamespace(attendance_status="present")]), FakeResult([SimpleNamespace(attendance_status="present")])],
     )
 
     payload = await teacher_attendance_view_for_date(
@@ -398,7 +418,7 @@ async def test_get_read_endpoints_are_read_only(monkeypatch):
 
     db = FakeAsyncSession(
         scalar_values=[None, None],
-        execute_values=[FakeResult([session])],
+        execute_values=[FakeResult([session]), *metadata_for(session)],
     )
 
     payload = await teacher_attendance_view_for_date(

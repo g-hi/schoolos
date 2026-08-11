@@ -33,6 +33,7 @@ const principalNav = [
 
 const teacherNav = [
   { href: "/teacher", label: "Dashboard", icon: "📊" },
+  { href: "/teacher/attendance", label: "Attendance", icon: "📝" },
   { href: "/teacher/reports", label: "Weekly Reports", icon: "🗂️" },
   { href: "/teacher/appointments", label: "Appointments", icon: "📅" },
   { href: "/teacher/my-classes", label: "My Classes", icon: "🏫" },

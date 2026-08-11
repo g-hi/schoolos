@@ -32,7 +32,7 @@ from services.timetable.attendance_registers import (
 from shared.auth.dependencies import resolve_authenticated_leadership, resolve_authenticated_teacher
 from shared.auth.tenant import resolve_tenant
 from shared.db.connection import get_db, set_tenant_context
-from shared.db.models import DailySession, OperationalSchoolDay, Student, Subject, Teacher, Tenant, User
+from shared.db.models import Class, DailySession, GradeLevel, OperationalSchoolDay, Student, Subject, Teacher, Tenant, User
 
 
 router = APIRouter(prefix="/leadership/operations/daily-sessions", tags=["Daily Sessions"])
@@ -115,6 +115,30 @@ async def teacher_attendance_view_for_date(
     )
     sessions = rows.scalars().all()
 
+    class_ids = {session.class_id for session in sessions if session.class_id}
+    subject_ids = {session.subject_id for session in sessions if session.subject_id}
+    class_rows = await db.execute(
+        select(Class, GradeLevel)
+        .outerjoin(GradeLevel, GradeLevel.id == Class.grade_level_id)
+        .where(Class.tenant_id == tenant_id, Class.id.in_(class_ids))
+    ) if class_ids else None
+    subject_rows = await db.execute(
+        select(Subject)
+        .where(Subject.tenant_id == tenant_id, Subject.id.in_(subject_ids))
+    ) if subject_ids else None
+    class_metadata: dict[object, dict[str, str | None]] = {}
+    subject_metadata: dict[object, str] = {}
+    if class_rows is not None:
+        for klass, grade_level in class_rows.all():
+            class_metadata[str(klass.id)] = {
+                "class_code": klass.code,
+                "grade_level": grade_level.name if grade_level else klass.grade,
+                "section": klass.section,
+            }
+    if subject_rows is not None:
+        for subject in subject_rows.scalars().all():
+            subject_metadata[str(subject.id)] = subject.name
+
     # Deduplicate on class_facing_session_key because parallel children or multi-
     # period materializations may surface multiple DailySession rows for one class-facing slot.
     seen_keys: set[str] = set()
@@ -124,6 +148,11 @@ async def teacher_attendance_view_for_date(
         if key in seen_keys:
             continue
         seen_keys.add(key)
+
+        class_info = class_metadata.get(str(session.class_id), {})
+        grade_level = class_info.get("grade_level")
+        section = class_info.get("section")
+        class_display_name = " ".join(part for part in (grade_level, section) if part) or "Class"
 
         if session.parallel_block_id is not None:
             status = "parallel_unresolved"
@@ -175,6 +204,11 @@ async def teacher_attendance_view_for_date(
                 "school_date": school_date.isoformat(),
                 "class_id": session.class_id,
                 "subject_id": session.subject_id,
+                "class_code": class_info.get("class_code"),
+                "grade_level": grade_level,
+                "section": section,
+                "class_display_name": class_display_name,
+                "subject_name": subject_metadata.get(str(session.subject_id)) if session.subject_id else None,
                 "teacher_id": session.teacher_id,
                 "start_time": session.period_start_time,
                 "end_time": session.period_end_time,

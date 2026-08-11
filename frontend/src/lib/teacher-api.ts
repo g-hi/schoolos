@@ -174,6 +174,139 @@ export interface TeacherMyClassesResponse {
   classes: TeacherMyClassItem[];
 }
 
+// Teacher operational attendance API surface (Phase 10D-3A)
+export interface TeacherAttendanceSessionItem {
+  daily_session_id: string;
+  class_facing_session_key: string;
+  school_date: string;
+  class_id: string;
+  subject_id: string;
+  class_code: string | null;
+  grade_level: string | null;
+  section: string | null;
+  class_display_name: string;
+  subject_name: string | null;
+  teacher_id: string;
+  start_time: string;
+  end_time: string;
+  session_status: string;
+  attendance_eligible: boolean;
+  attendance_register_id: string | null;
+  attendance_status: string;
+  expected_count: number;
+  marked_count: number;
+  unmarked_count: number;
+}
+
+export interface TeacherAttendanceTodayResponse {
+  school_date: string;
+  items: TeacherAttendanceSessionItem[];
+}
+
+export interface TeacherAttendanceRegisterRecord {
+  student_id: string;
+  student_name: string;
+  student_identifier: string | null;
+  attendance_status: "present" | "absent" | "late" | "excused" | "unmarked" | string;
+  minutes_late: number | null;
+  marked_at: string | null;
+}
+
+export interface TeacherAttendanceRegisterDetail {
+  register_id: string;
+  class_facing_session_key: string;
+  school_date: string;
+  register_status: "open" | "submitted" | "finalized" | string;
+  roster_resolution_status?: string;
+  expected_count: number;
+  marked_count: number;
+  unmarked_count: number;
+  records: TeacherAttendanceRegisterRecord[];
+}
+
+export async function getTeacherAttendanceToday(
+  options?: { school_date?: string },
+  token?: string | null,
+): Promise<TeacherAttendanceTodayResponse> {
+  return teacherRequest<TeacherAttendanceTodayResponse>("/teacher/operations/attendance/today", {
+    method: "GET",
+    token,
+    params: {
+      school_date: options?.school_date,
+    },
+  });
+}
+
+export async function getTeacherAttendanceSessions(
+  school_date: string,
+  token?: string | null,
+): Promise<TeacherAttendanceTodayResponse> {
+  return teacherRequest<TeacherAttendanceTodayResponse>("/teacher/operations/attendance/sessions", {
+    method: "GET",
+    token,
+    params: {
+      school_date,
+    },
+  });
+}
+
+export async function ensureTeacherAttendanceRegister(
+  daily_session_id: string,
+  token?: string | null,
+): Promise<{ register_id: string; register_status: string }> {
+  return teacherRequest<{ register_id: string; register_status: string }>("/teacher/operations/attendance/registers/ensure", {
+    method: "POST",
+    token,
+    body: {
+      daily_session_id,
+    },
+  });
+}
+
+export async function getTeacherAttendanceRegister(
+  register_id: string,
+  token?: string | null,
+): Promise<TeacherAttendanceRegisterDetail> {
+  return teacherRequest<TeacherAttendanceRegisterDetail>(`/teacher/operations/attendance/registers/${register_id}`, {
+    method: "GET",
+    token,
+  });
+}
+
+export async function bulkMarkTeacherAttendance(
+  register_id: string,
+  marks: Array<{ student_id: string; status: string; minutes_late?: number | null }>,
+  token?: string | null,
+): Promise<{ register_id: string; register_status: string }> {
+  return teacherRequest<{ register_id: string; register_status: string }>(`/teacher/operations/attendance/registers/${register_id}/bulk-mark`, {
+    method: "POST",
+    token,
+    body: {
+      marks,
+    },
+  });
+}
+
+export async function markAllPresentTeacherAttendance(
+  register_id: string,
+  token?: string | null,
+): Promise<{ register_id: string; register_status: string }> {
+  return teacherRequest<{ register_id: string; register_status: string }>(`/teacher/operations/attendance/registers/${register_id}/mark-all-present`, {
+    method: "POST",
+    token,
+  });
+}
+
+export async function submitTeacherAttendanceRegister(
+  register_id: string,
+  token?: string | null,
+): Promise<{ register_id: string; register_status: string }> {
+  return teacherRequest<{ register_id: string; register_status: string }>(`/teacher/operations/attendance/registers/${register_id}/submit`, {
+    method: "POST",
+    token,
+  });
+}
+
 // Teacher Pickup Endpoints
 export async function listTeacherPickupRequests(
   query?: { status?: PickupStatus; page?: number; page_size?: number },

@@ -20,17 +20,21 @@ from __future__ import annotations
 import hashlib
 import json
 import uuid
-from datetime import date as date_type
+from datetime import date as date_type, datetime, timezone
 
 from sqlalchemy import or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from services.gateway.ai.audit import log_action
 from shared.db.models import (
     AttendanceRecord,
     AttendanceRegister,
+    AuditLog,
     DailySession,
     OperationalSchoolDay,
     StudentEnrollment,
+    Teacher,
+    User,
 )
 
 
@@ -271,3 +275,354 @@ def _compute_roster_fingerprint(
         sort_keys=True,
     )
     return hashlib.sha256(payload.encode("utf-8")).hexdigest()
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# 10D-2B marking / submission / finalization API surface
+# ─────────────────────────────────────────────────────────────────────────────
+
+VALID_ATTENDANCE_STATUSES = {"unmarked", "present", "absent", "late", "excused"}
+LEADERSHIP_ROLES = {"principal", "school_admin"}
+
+
+async def bulk_mark_attendance(
+    db: AsyncSession,
+    *,
+    tenant_id: uuid.UUID,
+    register_id: uuid.UUID,
+    actor_id: uuid.UUID,
+    marks: list[dict],
+) -> AttendanceRegister:
+    """
+    Deterministic bulk marking.
+
+    marks: list of dicts like {"student_id": ..., "status": ..., "minutes_late": ...}
+    register must be open and actor must be authorized for the register.
+    Every target student must already be in the register snapshot.
+    """
+    register = await _load_register(db, tenant_id=tenant_id, register_id=register_id)
+    if register.register_status != "open":
+        raise AttendanceError("attendance_register_not_open")
+    if register.roster_resolution_status == "parallel_unresolved":
+        raise AttendanceError("parallel_roster_membership_unresolved")
+
+    await _authorize_attendance_actor(db, tenant_id=tenant_id, actor_id=actor_id, register=register)
+
+    record_map = await _load_register_records(db, tenant_id=tenant_id, register_id=register.id)
+    for mark in marks:
+        if "student_id" not in mark:
+            raise AttendanceError("attendance_unknown_student")
+        student_id = mark["student_id"]
+        if student_id not in record_map:
+            raise AttendanceError("attendance_unknown_student")
+        status = mark.get("status")
+        if status not in VALID_ATTENDANCE_STATUSES:
+            raise AttendanceError("attendance_status_unknown")
+        if status != "late" and mark.get("minutes_late") is not None:
+            raise AttendanceError("attendance_late_minutes_invalid")
+        if status == "late":
+            minutes = mark.get("minutes_late")
+            if minutes is None:
+                raise AttendanceError("attendance_late_minutes_invalid")
+            if int(minutes) < 0:
+                raise AttendanceError("attendance_late_minutes_invalid")
+            record_map[student_id].minutes_late = int(minutes)
+        else:
+            record_map[student_id].minutes_late = None
+        record_map[student_id].attendance_status = status
+        record_map[student_id].marked_at = datetime.now(timezone.utc)
+        record_map[student_id].marked_by = actor_id
+
+    await db.flush()
+    await log_action(
+        db,
+        tenant_id=tenant_id,
+        action="attendance.bulk_marked",
+        entity_type="AttendanceRegister",
+        entity_id=register.id,
+        actor_id=actor_id,
+        details={
+            "register_id": str(register.id),
+            "count": len(marks),
+            "statuses": [m.get("status") for m in marks],
+        },
+    )
+    return register
+
+
+async def mark_all_present(
+    db: AsyncSession,
+    *,
+    tenant_id: uuid.UUID,
+    register_id: uuid.UUID,
+    actor_id: uuid.UUID,
+) -> AttendanceRegister:
+    """Safe semantics: only currently unmarked records change to present."""
+    register = await _load_register(db, tenant_id=tenant_id, register_id=register_id)
+    if register.register_status != "open":
+        raise AttendanceError("attendance_register_not_open")
+    if register.roster_resolution_status == "parallel_unresolved":
+        raise AttendanceError("parallel_roster_membership_unresolved")
+
+    await _authorize_attendance_actor(db, tenant_id=tenant_id, actor_id=actor_id, register=register)
+
+    record_map = await _load_register_records(db, tenant_id=tenant_id, register_id=register.id)
+    changed = False
+    for record in record_map.values():
+        if record.attendance_status == "unmarked":
+            record.attendance_status = "present"
+            record.minutes_late = None
+            record.marked_at = datetime.now(timezone.utc)
+            record.marked_by = actor_id
+            changed = True
+
+    if changed:
+        await db.flush()
+        await log_action(
+            db,
+            tenant_id=tenant_id,
+            action="attendance.mark_all_present",
+            entity_type="AttendanceRegister",
+            entity_id=register.id,
+            actor_id=actor_id,
+            details={"register_id": str(register.id), "only_unmarked_to_present": True},
+        )
+    return register
+
+
+async def submit_attendance_register(
+    db: AsyncSession,
+    *,
+    tenant_id: uuid.UUID,
+    register_id: uuid.UUID,
+    actor_id: uuid.UUID,
+) -> AttendanceRegister:
+    """Submit only when all expected AttendanceRecords are marked."""
+    register = await _load_register(db, tenant_id=tenant_id, register_id=register_id)
+    if register.register_status != "open":
+        raise AttendanceError("attendance_register_not_open")
+    if register.roster_resolution_status == "parallel_unresolved":
+        raise AttendanceError("parallel_roster_membership_unresolved")
+
+    await _authorize_attendance_actor(db, tenant_id=tenant_id, actor_id=actor_id, register=register)
+
+    record_map = await _load_register_records(db, tenant_id=tenant_id, register_id=register.id)
+    unmarked = [r for r in record_map.values() if r.attendance_status == "unmarked"]
+    if unmarked:
+        raise AttendanceError(
+            "attendance_incomplete",
+            detail=f"{len(unmarked)} unmarked student records remain",
+        )
+
+    register.register_status = "submitted"
+    register.submitted_at = datetime.now(timezone.utc)
+    register.submitted_by = actor_id
+    await db.flush()
+    await log_action(
+        db,
+        tenant_id=tenant_id,
+        action="attendance.submitted",
+        entity_type="AttendanceRegister",
+        entity_id=register.id,
+        actor_id=actor_id,
+        details={"register_id": str(register.id), "submitted": True},
+    )
+    return register
+
+
+async def finalize_attendance_register(
+    db: AsyncSession,
+    *,
+    tenant_id: uuid.UUID,
+    register_id: uuid.UUID,
+    actor_id: uuid.UUID,
+) -> AttendanceRegister:
+    """Leadership may finalize only a submitted register."""
+    register = await _load_register(db, tenant_id=tenant_id, register_id=register_id)
+    if register.register_status != "submitted":
+        raise AttendanceError("attendance_register_not_submitted")
+    if register.roster_resolution_status == "parallel_unresolved":
+        raise AttendanceError("parallel_roster_membership_unresolved")
+
+    if not await _authorize_leadership_actor(db, tenant_id=tenant_id, actor_id=actor_id):
+        raise AttendanceError("attendance_authorization_denied")
+
+    register.register_status = "finalized"
+    register.finalized_at = datetime.now(timezone.utc)
+    register.finalized_by = actor_id
+    await db.flush()
+    await log_action(
+        db,
+        tenant_id=tenant_id,
+        action="attendance.finalized",
+        entity_type="AttendanceRegister",
+        entity_id=register.id,
+        actor_id=actor_id,
+        details={"register_id": str(register.id), "finalized": True},
+    )
+    return register
+
+
+async def correct_attendance_register(
+    db: AsyncSession,
+    *,
+    tenant_id: uuid.UUID,
+    register_id: uuid.UUID,
+    actor_id: uuid.UUID,
+    student_id: uuid.UUID,
+    new_status: str,
+    correction_reason: str,
+) -> AttendanceRecord:
+    """Leadership correction after submission/finalization only."""
+    if not correction_reason or not correction_reason.strip():
+        raise AttendanceError("attendance_correction_reason_required")
+    if new_status not in VALID_ATTENDANCE_STATUSES:
+        raise AttendanceError("attendance_status_unknown")
+
+    register = await _load_register(db, tenant_id=tenant_id, register_id=register_id)
+    if register.register_status not in {"submitted", "finalized"}:
+        raise AttendanceError("attendance_register_not_submit_or_finalized")
+    if register.roster_resolution_status == "parallel_unresolved":
+        raise AttendanceError("parallel_roster_membership_unresolved")
+
+    if not await _authorize_leadership_actor(db, tenant_id=tenant_id, actor_id=actor_id):
+        raise AttendanceError("attendance_authorization_denied")
+
+    record_map = await _load_register_records(db, tenant_id=tenant_id, register_id=register.id)
+    if student_id not in record_map:
+        raise AttendanceError("attendance_unknown_student")
+
+    record = record_map[student_id]
+    before = record.attendance_status
+    record.attendance_status = new_status
+    if new_status != "late":
+        record.minutes_late = None
+    else:
+        if record.minutes_late is None:
+            record.minutes_late = 0
+    record.marked_at = datetime.now(timezone.utc)
+    record.marked_by = actor_id
+
+    await db.flush()
+    await log_action(
+        db,
+        tenant_id=tenant_id,
+        action="attendance.corrected",
+        entity_type="AttendanceRegister",
+        entity_id=register.id,
+        actor_id=actor_id,
+        details={
+            "register_id": str(register.id),
+            "student_id": str(student_id),
+            "before": before,
+            "after": new_status,
+            "reason": correction_reason.strip()[:200],
+        },
+    )
+    return record
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Internal authority helpers
+# ─────────────────────────────────────────────────────────────────────────────
+
+async def _load_register(
+    db: AsyncSession,
+    *,
+    tenant_id: uuid.UUID,
+    register_id: uuid.UUID,
+) -> AttendanceRegister:
+    register = await db.scalar(
+        select(AttendanceRegister).where(
+            AttendanceRegister.id == register_id,
+            AttendanceRegister.tenant_id == tenant_id,
+        )
+    )
+    if register is None:
+        raise AttendanceError("attendance_register_not_found")
+    return register
+
+
+async def _load_register_records(
+    db: AsyncSession,
+    *,
+    tenant_id: uuid.UUID,
+    register_id: uuid.UUID,
+) -> dict[uuid.UUID, AttendanceRecord]:
+    records = await db.execute(
+        select(AttendanceRecord).where(
+            AttendanceRecord.tenant_id == tenant_id,
+            AttendanceRecord.attendance_register_id == register_id,
+        )
+    )
+    rows = records.scalars().all()
+    return {row.student_id: row for row in rows}
+
+
+async def _authorize_attendance_actor(
+    db: AsyncSession,
+    *,
+    tenant_id: uuid.UUID,
+    actor_id: uuid.UUID,
+    register: AttendanceRegister,
+) -> None:
+    actor = await db.scalar(
+        select(User).where(
+            User.id == actor_id,
+            User.tenant_id == tenant_id,
+        )
+    )
+    if actor is None:
+        raise AttendanceError("attendance_authorization_denied")
+
+    if actor.role in LEADERSHIP_ROLES:
+        return
+
+    if actor.role != "teacher":
+        raise AttendanceError("attendance_authorization_denied")
+
+    teacher = await db.scalar(
+        select(Teacher).where(
+            Teacher.tenant_id == tenant_id,
+            Teacher.user_id == actor_id,
+        )
+    )
+    if teacher is None:
+        raise AttendanceError("attendance_authorization_denied")
+
+    # Compare the actor's teacher user mapping against the DailySession teacher_id
+    # stored in the source class-facing session. This is the scheduled teacher
+    # guard for ordinary sessions; phase 10E may extend by substitute teacher ID.
+    session_rows = await db.execute(
+        select(DailySession).where(
+            DailySession.tenant_id == tenant_id,
+            DailySession.operational_school_day_id == register.operational_school_day_id,
+            DailySession.class_facing_session_key == register.class_facing_session_key,
+        )
+    )
+    sessions = session_rows.scalars().all()
+    if not sessions:
+        raise AttendanceError("attendance_authorization_denied")
+
+    teacher_id_matches = [
+        True for s in sessions if s.teacher_id is not None and str(s.teacher_id) == str(teacher.id)
+    ]
+    if not teacher_id_matches:
+        raise AttendanceError("attendance_authorization_denied")
+
+
+async def _authorize_leadership_actor(
+    db: AsyncSession,
+    *,
+    tenant_id: uuid.UUID,
+    actor_id: uuid.UUID,
+) -> bool:
+    actor = await db.scalar(
+        select(User).where(
+            User.id == actor_id,
+            User.tenant_id == tenant_id,
+        )
+    )
+    if actor is None:
+        return False
+    return actor.role in LEADERSHIP_ROLES

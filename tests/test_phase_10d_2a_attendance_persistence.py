@@ -257,14 +257,16 @@ def test_migration_identifiers_le63_chars() -> None:
     )
 
 
-def test_migration_alembic_head() -> None:
+def test_migration_revision_is_in_linear_chain() -> None:
     from alembic.config import Config
     from alembic.script import ScriptDirectory
 
     script = ScriptDirectory.from_config(Config("alembic.ini"))
-    assert script.get_heads() == [REVISION_ID], (
-        f"Expected head {REVISION_ID}, got {script.get_heads()}"
-    )
+    revision = script.get_revision(REVISION_ID)
+
+    assert revision is not None
+    assert revision.revision == REVISION_ID
+    assert revision.down_revision == DOWN_REVISION
 
 
 def test_migration_chain_includes_10d_foundation() -> None:
@@ -274,6 +276,7 @@ def test_migration_chain_includes_10d_foundation() -> None:
     script = ScriptDirectory.from_config(Config("alembic.ini"))
     heads = script.get_heads()
     chain = {r.revision for r in script.iterate_revisions(heads[0], "base")}
+    assert REVISION_ID in chain
     assert DOWN_REVISION in chain   # Phase 10D foundation
     assert "e7b1c9d4a2f0" in chain  # Phase 10C batch 5
 

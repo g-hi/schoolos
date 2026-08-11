@@ -2788,12 +2788,16 @@ class AttendanceRegister(Base):
     roster_resolution_status:  Mapped[str]            = mapped_column(String(30), nullable=False, server_default="resolved")
     roster_source_fingerprint: Mapped[str | None]     = mapped_column(String(64), nullable=True)
     expected_student_count:    Mapped[int]            = mapped_column(Integer, nullable=False, server_default="0")
+    submitted_at:              Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    submitted_by:              Mapped[uuid.UUID | None] = mapped_column(UUID(as_uuid=True), ForeignKey("users.id", ondelete="SET NULL"), nullable=True)
+    finalized_at:              Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    finalized_by:              Mapped[uuid.UUID | None] = mapped_column(UUID(as_uuid=True), ForeignKey("users.id", ondelete="SET NULL"), nullable=True)
     created_at:                Mapped[datetime]       = mapped_column(DateTime(timezone=True), nullable=False, server_default=func.now())
     updated_at:                Mapped[datetime]       = mapped_column(DateTime(timezone=True), nullable=False, server_default=func.now(), onupdate=func.now())
 
     __table_args__ = (
         CheckConstraint(
-            "register_status IN ('open','closed')",
+            "register_status IN ('open','submitted','finalized')",
             name="ck_attendance_registers_status",
         ),
         CheckConstraint(
@@ -2839,6 +2843,7 @@ class AttendanceRecord(Base):
     student_id:             Mapped[uuid.UUID]        = mapped_column(UUID(as_uuid=True), ForeignKey("students.id", ondelete="RESTRICT"), nullable=False, index=True)
     source_enrollment_id:   Mapped[uuid.UUID | None] = mapped_column(UUID(as_uuid=True), ForeignKey("student_enrollments.id", ondelete="SET NULL"), nullable=True)
     attendance_status:      Mapped[str]              = mapped_column(String(20), nullable=False, server_default="unmarked")
+    minutes_late:           Mapped[int | None]       = mapped_column(Integer, nullable=True)
     marked_at:              Mapped[datetime | None]  = mapped_column(DateTime(timezone=True), nullable=True)
     marked_by:              Mapped[uuid.UUID | None] = mapped_column(UUID(as_uuid=True), ForeignKey("users.id", ondelete="SET NULL"), nullable=True)
     created_at:             Mapped[datetime]         = mapped_column(DateTime(timezone=True), nullable=False, server_default=func.now())
@@ -2849,6 +2854,7 @@ class AttendanceRecord(Base):
             "attendance_status IN ('unmarked','present','absent','late','excused')",
             name="ck_attendance_records_status",
         ),
+        CheckConstraint("minutes_late IS NULL OR minutes_late >= 0", name="ck_attendance_records_minutes_late_nonnegative"),
         UniqueConstraint(
             "attendance_register_id",
             "student_id",

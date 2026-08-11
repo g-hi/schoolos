@@ -11,13 +11,14 @@ DOWN_REVISION = "e7b1c9d4a2f0"
 MIGRATION_FILE = Path("alembic/versions/f3a2d8c1e9b4_phase_10d_daily_sessions_foundation.py")
 
 
-def test_phase_10d_revision_is_linear_head() -> None:
+def test_phase_10d_revision_is_in_linear_chain() -> None:
     script = ScriptDirectory.from_config(Config("alembic.ini"))
-    assert script.get_heads() == [REVISION_ID]
-
     revision = script.get_revision(REVISION_ID)
+
     assert revision is not None
+    assert revision.revision == REVISION_ID
     assert revision.down_revision == DOWN_REVISION
+
 
 
 def test_phase_10d_migration_chain_includes_prior_phases() -> None:

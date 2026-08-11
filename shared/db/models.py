@@ -2759,6 +2759,108 @@ class DailySession(Base):
     )
 
 
+# ─────────────────────────────────────────────────────────────────────────────
+# AttendanceRegister  (Phase 10D-2: one register per class-facing session slot)
+# ─────────────────────────────────────────────────────────────────────────────
+
+class AttendanceRegister(Base):
+    """
+    Attendance register for one class-facing session slot on a specific school date.
+
+    Identity: one row per (tenant, operational_school_day, class_facing_session_key).
+
+    class_facing_session_key links back to DailySession.class_facing_session_key.
+    Multiple parallel DailySession children share one key → one register.
+
+    roster_source_fingerprint: SHA-256 over sorted (student_id, enrollment_id)
+    pairs effective on school_date. Same effective roster → same fingerprint.
+    A changed fingerprint after creation → roster_resolution_status='stale'.
+    """
+    __tablename__ = "attendance_registers"
+
+    id:                        Mapped[uuid.UUID]      = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    tenant_id:                 Mapped[uuid.UUID]      = mapped_column(UUID(as_uuid=True), ForeignKey("tenants.id", ondelete="CASCADE"), nullable=False, index=True)
+    operational_school_day_id: Mapped[uuid.UUID]      = mapped_column(UUID(as_uuid=True), ForeignKey("operational_school_days.id", ondelete="CASCADE"), nullable=False, index=True)
+    class_facing_session_key:  Mapped[str]            = mapped_column(String(64), nullable=False)
+    class_id:                  Mapped[str]            = mapped_column(String(120), nullable=False)
+    school_date:               Mapped[date_type]      = mapped_column(Date, nullable=False)
+    register_status:           Mapped[str]            = mapped_column(String(20), nullable=False, server_default="open")
+    roster_resolution_status:  Mapped[str]            = mapped_column(String(30), nullable=False, server_default="resolved")
+    roster_source_fingerprint: Mapped[str | None]     = mapped_column(String(64), nullable=True)
+    expected_student_count:    Mapped[int]            = mapped_column(Integer, nullable=False, server_default="0")
+    created_at:                Mapped[datetime]       = mapped_column(DateTime(timezone=True), nullable=False, server_default=func.now())
+    updated_at:                Mapped[datetime]       = mapped_column(DateTime(timezone=True), nullable=False, server_default=func.now(), onupdate=func.now())
+
+    __table_args__ = (
+        CheckConstraint(
+            "register_status IN ('open','closed')",
+            name="ck_attendance_registers_status",
+        ),
+        CheckConstraint(
+            "roster_resolution_status IN ('resolved','stale','parallel_unresolved')",
+            name="ck_att_registers_roster_status",
+        ),
+        UniqueConstraint(
+            "tenant_id",
+            "operational_school_day_id",
+            "class_facing_session_key",
+            name="uq_att_registers_osd_session_key",
+        ),
+        Index("ix_att_registers_tenant_id", "tenant_id"),
+        Index("ix_att_registers_osd_id", "operational_school_day_id"),
+        Index("ix_att_registers_school_date", "school_date"),
+        Index("ix_att_registers_tenant_date", "tenant_id", "school_date"),
+    )
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# AttendanceRecord  (Phase 10D-2: one record per expected student per register)
+# ─────────────────────────────────────────────────────────────────────────────
+
+class AttendanceRecord(Base):
+    """
+    One attendance record per student per register.
+
+    Created with attendance_status='unmarked'. No student is automatically
+    marked present.
+
+    source_enrollment_id: the StudentEnrollment row that placed the student
+    in the effective roster. Nullable (SET NULL) to survive enrollment
+    administrative corrections.
+
+    marked_by: nullable FK to users.id. Only set when the record is updated
+    from 'unmarked' (future phase).
+    """
+    __tablename__ = "attendance_records"
+
+    id:                     Mapped[uuid.UUID]        = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    tenant_id:              Mapped[uuid.UUID]        = mapped_column(UUID(as_uuid=True), ForeignKey("tenants.id", ondelete="CASCADE"), nullable=False, index=True)
+    attendance_register_id: Mapped[uuid.UUID]        = mapped_column(UUID(as_uuid=True), ForeignKey("attendance_registers.id", ondelete="CASCADE"), nullable=False, index=True)
+    student_id:             Mapped[uuid.UUID]        = mapped_column(UUID(as_uuid=True), ForeignKey("students.id", ondelete="RESTRICT"), nullable=False, index=True)
+    source_enrollment_id:   Mapped[uuid.UUID | None] = mapped_column(UUID(as_uuid=True), ForeignKey("student_enrollments.id", ondelete="SET NULL"), nullable=True)
+    attendance_status:      Mapped[str]              = mapped_column(String(20), nullable=False, server_default="unmarked")
+    marked_at:              Mapped[datetime | None]  = mapped_column(DateTime(timezone=True), nullable=True)
+    marked_by:              Mapped[uuid.UUID | None] = mapped_column(UUID(as_uuid=True), ForeignKey("users.id", ondelete="SET NULL"), nullable=True)
+    created_at:             Mapped[datetime]         = mapped_column(DateTime(timezone=True), nullable=False, server_default=func.now())
+    updated_at:             Mapped[datetime]         = mapped_column(DateTime(timezone=True), nullable=False, server_default=func.now(), onupdate=func.now())
+
+    __table_args__ = (
+        CheckConstraint(
+            "attendance_status IN ('unmarked','present','absent','late','excused')",
+            name="ck_attendance_records_status",
+        ),
+        UniqueConstraint(
+            "attendance_register_id",
+            "student_id",
+            name="uq_attendance_records_register_student",
+        ),
+        Index("ix_att_records_tenant_id", "tenant_id"),
+        Index("ix_att_records_register_id", "attendance_register_id"),
+        Index("ix_att_records_student_id", "student_id"),
+        Index("ix_att_records_status", "attendance_status"),
+    )
+
+
 # -- Parent Experience models (Phase 8.1) -------------------------------------
 # Explicit import ensures all parent tables are registered with Base.metadata.
 # Uses a named alias to prevent wildcard import and circular-import risks.

@@ -1,5 +1,6 @@
 import { render, screen } from "@testing-library/react";
 import Sidebar from "@/components/sidebar";
+import { vi, describe, it, expect } from "vitest";
 
 const mockedUsePathname = vi.fn();
 const mockedUseAuth = vi.fn();
@@ -53,6 +54,7 @@ describe("sidebar route mode", () => {
     rerender(<Sidebar />);
     expect(screen.queryByText("Family Hub")).not.toBeInTheDocument();
     expect(screen.getByText("People & Families").closest("a")).toHaveAttribute("href", "/people");
+    expect(screen.getByText("Attendance").closest("a"),).toHaveAttribute("href", "/leadership/attendance");
     expect(screen.getByText("School Setup").closest("a")).toHaveAttribute("href", "/onboarding");
     expect(screen.getByText("Appointments").closest("a")).toHaveAttribute("href", "/appointments");
     expect(screen.getByText("Announcements").closest("a")).toHaveAttribute("href", "/announcements");
@@ -69,6 +71,9 @@ describe("sidebar route mode", () => {
     rerender(<Sidebar />);
     expect(screen.getByText("School Setup")).toBeInTheDocument();
     expect(screen.getAllByText("School Setup")).toHaveLength(1);
+    expect(
+      screen.queryByText("Attendance"),
+    ).not.toBeInTheDocument();
 
     mockedUsePathname.mockReturnValue("/teacher");
     mockedUseAuth.mockReturnValue({ user: { role: "teacher" }, logout: vi.fn() });

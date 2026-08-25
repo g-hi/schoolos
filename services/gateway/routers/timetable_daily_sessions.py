@@ -261,7 +261,7 @@ async def teacher_attendance_register_detail(
             {
                 "student_id": str(row.student_id),
                 "student_name": getattr(student, "name", None) or getattr(student, "display_name", None) or str(row.student_id),
-                "student_identifier": getattr(student, "student_number", None) or getattr(student, "identifier", None),
+                "student_identifier": student.student_code if student else None,
                 "attendance_status": row.attendance_status,
                 "minutes_late": row.minutes_late,
                 "marked_at": row.marked_at.isoformat() if row.marked_at else None,
@@ -396,7 +396,98 @@ async def leadership_attendance_register_list(
         )
     )
     registers = rows.scalars().all()
+
+    if not registers:
+        return []
+
+    class_ids = {
+    register.class_id
+    for register in registers
+    if register.class_id
+                 }
+    session_keys = {
+        register.class_facing_session_key
+        for register in registers
+        if register.class_facing_session_key
+    }
+
+    # Resolve the class-facing session so leadership sees useful operational
+    # metadata instead of raw IDs.
+    session_rows = await db.execute(
+        select(DailySession).where(
+            DailySession.tenant_id == tenant_id,
+            DailySession.school_date == school_date,
+            DailySession.class_facing_session_key.in_(session_keys),
+        )
+    ) if session_keys else None
+
+    sessions_by_key: dict[str, DailySession] = {}
+    if session_rows is not None:
+        for session in session_rows.scalars().all():
+            key = session.class_facing_session_key or session.session_key
+            if key and key not in sessions_by_key:
+                sessions_by_key[key] = session
+
+    resolved_class_ids = set(class_ids)
+    subject_ids = set()
+    teacher_ids = set()
+
+    for session in sessions_by_key.values():
+        if session.class_id:
+            resolved_class_ids.add(session.class_id)
+        if session.subject_id:
+            subject_ids.add(session.subject_id)
+        if session.teacher_id:
+            teacher_ids.add(session.teacher_id)
+
+    class_rows = await db.execute(
+        select(Class, GradeLevel)
+        .outerjoin(GradeLevel, GradeLevel.id == Class.grade_level_id)
+        .where(
+            Class.tenant_id == tenant_id,
+            Class.id.in_(resolved_class_ids),
+        )
+    ) if resolved_class_ids else None
+
+    class_metadata: dict[str, dict[str, str | None]] = {}
+    if class_rows is not None:
+        for klass, grade_level in class_rows.all():
+            class_metadata[str(klass.id)] = {
+                "class_code": klass.code,
+                "grade_level": grade_level.name if grade_level else klass.grade,
+                "section": klass.section,
+            }
+
+    subject_rows = await db.execute(
+        select(Subject).where(
+            Subject.tenant_id == tenant_id,
+            Subject.id.in_(subject_ids),
+        )
+    ) if subject_ids else None
+
+    subject_metadata: dict[str, str] = {}
+    if subject_rows is not None:
+        for subject in subject_rows.scalars().all():
+            subject_metadata[str(subject.id)] = subject.name
+
+
+    teacher_rows = await db.execute(
+        select(Teacher).where(
+            Teacher.tenant_id == tenant_id,
+            Teacher.id.in_(teacher_ids),
+     )
+    ) if teacher_ids else None
+
+    teacher_metadata: dict[str, str] = {}
+    if teacher_rows is not None:
+        for teacher in teacher_rows.scalars().all():
+            teacher_metadata[str(teacher.id)] = (
+                teacher.user.name
+                if getattr(teacher, "user", None) is not None
+                else str(teacher.id)
+            )
     payload = []
+
     for register in registers:
         record_rows = await db.execute(
             select(AttendanceRecord).where(
@@ -405,22 +496,72 @@ async def leadership_attendance_register_list(
             )
         )
         records = record_rows.scalars().all()
+
+        session = sessions_by_key.get(register.class_facing_session_key)
+        class_id = str(register.class_id)
+        if session is not None and session.class_id:
+            class_id = str(session.class_id)
+
+        class_info = class_metadata.get(class_id, {})
+        grade_level = class_info.get("grade_level")
+        section = class_info.get("section")
+        class_display_name = (
+            " ".join(part for part in (grade_level, section) if part)
+            or class_info.get("class_code")
+            or "Class"
+        )
+
         payload.append(
             {
                 "register_id": str(register.id),
                 "class_id": register.class_id,
                 "class_facing_session_key": register.class_facing_session_key,
+                "class_code": class_info.get("class_code"),
+                "grade_level": grade_level,
+                "section": section,
+                "class_display_name": class_display_name,
+                "subject_name": (
+                    subject_metadata.get(str(session.subject_id))
+                    if session is not None and session.subject_id
+                    else None
+                ),
+                "teacher_name": (
+                    teacher_metadata.get(str(session.teacher_id))
+                    if session is not None and session.teacher_id
+                    else None
+                ),
+                "start_time": session.period_start_time if session is not None else None,
+                "end_time": session.period_end_time if session is not None else None,
                 "status": register.register_status,
                 "roster_resolution_status": register.roster_resolution_status,
                 "expected": register.expected_student_count,
-                "marked": sum(1 for r in records if r.attendance_status != "unmarked"),
-                "unmarked": sum(1 for r in records if r.attendance_status == "unmarked"),
-                "present": sum(1 for r in records if r.attendance_status == "present"),
-                "absent": sum(1 for r in records if r.attendance_status == "absent"),
-                "late": sum(1 for r in records if r.attendance_status == "late"),
-                "excused": sum(1 for r in records if r.attendance_status == "excused"),
+                "marked": sum(
+                    1 for record in records
+                    if record.attendance_status != "unmarked"
+                ),
+                "unmarked": sum(
+                    1 for record in records
+                    if record.attendance_status == "unmarked"
+                ),
+                "present": sum(
+                    1 for record in records
+                    if record.attendance_status == "present"
+                ),
+                "absent": sum(
+                    1 for record in records
+                    if record.attendance_status == "absent"
+                ),
+                "late": sum(
+                    1 for record in records
+                    if record.attendance_status == "late"
+                ),
+                "excused": sum(
+                    1 for record in records
+                    if record.attendance_status == "excused"
+                ),
             }
         )
+
     return payload
 
 
@@ -438,13 +579,68 @@ async def leadership_attendance_register_detail(
     )
     if register is None:
         raise AttendanceError("attendance_register_not_found")
+
     record_rows = await db.execute(
         select(AttendanceRecord).where(
             AttendanceRecord.tenant_id == tenant_id,
             AttendanceRecord.attendance_register_id == register.id,
         )
     )
-    records = record_rows.scalars().all()
+    attendance_records = record_rows.scalars().all()
+
+    student_ids = {
+        record.student_id
+        for record in attendance_records
+        if record.student_id
+    }
+
+    student_rows = await db.execute(
+        select(Student).where(
+            Student.tenant_id == tenant_id,
+            Student.id.in_(student_ids),
+        )
+    ) if student_ids else None
+
+    students_by_id: dict[uuid.UUID, Student] = {}
+    if student_rows is not None:
+        students_by_id = {
+            student.id: student
+            for student in student_rows.scalars().all()
+        }
+
+    records = []
+
+    for record in attendance_records:
+        student = students_by_id.get(record.student_id)
+
+        records.append(
+            {
+                "student_id": str(record.student_id),
+                "student_name": (
+                    student.name
+                    if student is not None
+                    else str(record.student_id)
+                ),
+                "student_identifier": (
+                    student.student_code
+                    if student is not None
+                    else None
+                ),
+                "status": record.attendance_status,
+                "minutes_late": record.minutes_late,
+                "marked_by": (
+                    str(record.marked_by)
+                    if record.marked_by
+                    else None
+                ),
+                "marked_at": (
+                    record.marked_at.isoformat()
+                    if record.marked_at
+                    else None
+                ),
+            }
+        )
+
     return {
         "register_id": str(register.id),
         "school_date": register.school_date.isoformat(),
@@ -453,16 +649,15 @@ async def leadership_attendance_register_detail(
         "register_status": register.register_status,
         "roster_resolution_status": register.roster_resolution_status,
         "expected_count": register.expected_student_count,
-        "records": [
-            {
-                "student_id": str(r.student_id),
-                "status": r.attendance_status,
-                "minutes_late": r.minutes_late,
-                "marked_by": str(r.marked_by) if r.marked_by else None,
-                "marked_at": r.marked_at.isoformat() if r.marked_at else None,
-            }
-            for r in records
-        ],
+        "marked_count": sum(
+            1 for record in records
+            if record["status"] != "unmarked"
+        ),
+        "unmarked_count": sum(
+            1 for record in records
+            if record["status"] == "unmarked"
+        ),
+        "records": records,
     }
 
 

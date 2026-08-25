@@ -307,6 +307,148 @@ export async function submitTeacherAttendanceRegister(
   });
 }
 
+// Leadership operational attendance API surface (Phase 10D-3B2)
+
+export interface LeadershipAttendanceDailySummary {
+  school_date: string;
+  eligible_sessions: number;
+  not_started: number;
+  open: number;
+  submitted: number;
+  finalized: number;
+  parallel_unresolved: number;
+  expected_students: number;
+  present: number;
+  absent: number;
+  late: number;
+  excused: number;
+  unmarked: number;
+}
+
+export interface LeadershipAttendanceRegisterListItem {
+  register_id: string;
+  class_id: string;
+  class_facing_session_key: string;
+  class_code: string | null;
+  grade_level: string | null;
+  section: string | null;
+  class_display_name: string;
+  subject_name: string | null;
+  teacher_name: string | null;
+  start_time: string | null;
+  end_time: string | null;
+  status: "open" | "submitted" | "finalized" | string;
+  roster_resolution_status: string;
+  expected: number;
+  marked: number;
+  unmarked: number;
+  present: number;
+  absent: number;
+  late: number;
+  excused: number;
+}
+
+export interface LeadershipAttendanceRegisterRecord {
+  student_id: string;
+  student_name: string;
+  student_identifier: string | null;
+  status: "present" | "absent" | "late" | "excused" | "unmarked" | string;
+  minutes_late: number | null;
+  marked_by: string | null;
+  marked_at: string | null;
+}
+
+
+export interface LeadershipAttendanceRegisterDetail {
+  register_id: string;
+  school_date: string;
+  class_id: string;
+  class_facing_session_key: string;
+  register_status: "open" | "submitted" | "finalized" | string;
+  roster_resolution_status: string;
+  expected_count: number;
+  records: LeadershipAttendanceRegisterRecord[];
+  marked_count: number;
+  unmarked_count: number;
+}
+
+export async function getLeadershipAttendanceDailySummary(
+  school_date: string,
+  token?: string | null,
+): Promise<LeadershipAttendanceDailySummary> {
+  return teacherRequest<LeadershipAttendanceDailySummary>(
+    "/leadership/operations/attendance/daily-summary",
+    {
+      method: "GET",
+      token,
+      params: {
+        school_date,
+      },
+    },
+  );
+}
+
+export async function listLeadershipAttendanceRegisters(
+  school_date: string,
+  token?: string | null,
+): Promise<LeadershipAttendanceRegisterListItem[]> {
+  return teacherRequest<LeadershipAttendanceRegisterListItem[]>(
+    "/leadership/operations/attendance/registers",
+    {
+      method: "GET",
+      token,
+      params: {
+        school_date,
+      },
+    },
+  );
+}
+
+export async function getLeadershipAttendanceRegister(
+  register_id: string,
+  token?: string | null,
+): Promise<LeadershipAttendanceRegisterDetail> {
+  return teacherRequest<LeadershipAttendanceRegisterDetail>(
+    `/leadership/operations/attendance/registers/${register_id}`,
+    {
+      method: "GET",
+      token,
+    },
+  );
+}
+
+export async function finalizeLeadershipAttendanceRegister(
+  register_id: string,
+  token?: string | null,
+): Promise<{ register_id: string; register_status: string }> {
+  return teacherRequest<{ register_id: string; register_status: string }>(
+    `/leadership/operations/attendance/registers/${register_id}/finalize`,
+    {
+      method: "POST",
+      token,
+    },
+  );
+}
+
+export async function correctLeadershipAttendanceRegister(
+  register_id: string,
+  correction: {
+    student_id: string;
+    new_status: "present" | "absent" | "late" | "excused" | string;
+    correction_reason: string;
+  },
+  token?: string | null,
+): Promise<{ student_id: string; attendance_status: string }> {
+  return teacherRequest<{ student_id: string; attendance_status: string }>(
+    `/leadership/operations/attendance/registers/${register_id}/correct`,
+    {
+      method: "POST",
+      token,
+      body: correction,
+    },
+  );
+}
+
 // Teacher Pickup Endpoints
 export async function listTeacherPickupRequests(
   query?: { status?: PickupStatus; page?: number; page_size?: number },

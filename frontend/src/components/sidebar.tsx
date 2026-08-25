@@ -12,6 +12,7 @@ const parentNotificationsUpdatedEvent = "schoolos:parent-notifications-updated";
 const principalNav = [
   { href: "/", label: "Dashboard", icon: "📊" },
   { href: "/people", label: "People & Families", icon: "👥" },
+  { href: "/leadership/attendance", label: "Attendance", icon: "📝" },
   { href: "/leadership/timetable", label: "Timetable Command Centre", icon: "🧩" },
   { href: "/leadership/timetable-setup", label: "Timetable Setup", icon: "🧭" },
   { href: "/leadership/timetable-policies", label: "Timetable Policies", icon: "📐" },
@@ -65,7 +66,18 @@ export default function Sidebar() {
   const role = user?.role;
   const [unreadCount, setUnreadCount] = useState<number | null>(null);
 
-  const nav = role === "parent" ? parentNav : role === "teacher" ? teacherNav : isLeadershipRole(role) ? principalNav : [];
+  const nav =
+  role === "parent"
+    ? parentNav
+    : role === "teacher"
+      ? teacherNav
+      : isLeadershipRole(role)
+        ? principalNav.filter(
+            (item) =>
+              item.href !== "/leadership/attendance" ||
+              role === "principal",
+          )
+        : [];
   const roleBadge = role === "parent" ? "PA" : role === "teacher" ? "T" : "P";
   const roleLabel = role === "parent" ? "Parent" : role === "teacher" ? "Teacher" : isLeadershipRole(role) ? "Leadership" : "Unknown";
   const roleDetail = role === "parent" ? "Family" : role === "teacher" ? "Portal" : isLeadershipRole(role) ? "Admin" : "Access";

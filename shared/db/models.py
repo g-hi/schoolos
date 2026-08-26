@@ -2429,6 +2429,129 @@ class DutyAssignment(Base):
 
 
 # ─────────────────────────────────────────────────────────────────────────────
+# OperationalAssignmentRequest  (Phase 10E-3A: dated temporary coverage need)
+# ─────────────────────────────────────────────────────────────────────────────
+
+class OperationalAssignmentRequest(Base):
+    """
+    A dated request for temporary coverage/reassignment.
+
+    Separate from TeacherAbsence lifecycle and from the stable baseline
+    (TimetableVersionAssignment / DailySession / DutyAssignment), which this
+    model only references — never mutates.
+
+    Exactly one of daily_session_id / duty_assignment_id is populated,
+    matching assignment_type.
+
+    status retains the full preferred lifecycle now (pending, evaluated,
+    pending_approval, approved, no_eligible_candidate, cancelled, completed)
+    because it is a single CHECK constraint on a string column with no
+    additional schema cost — later tickets (eligibility, approval) can use
+    these states without another migration.
+    """
+    __tablename__ = "operational_assignment_requests"
+
+    id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    tenant_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), ForeignKey("tenants.id", ondelete="CASCADE"), nullable=False)
+    assignment_type: Mapped[str] = mapped_column(String(30), nullable=False)
+    school_date: Mapped[date_type] = mapped_column(Date, nullable=False)
+    teacher_absence_id: Mapped[uuid.UUID | None] = mapped_column(UUID(as_uuid=True), ForeignKey("teacher_absences.id", ondelete="SET NULL"), nullable=True)
+    original_teacher_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), ForeignKey("teachers.id", ondelete="RESTRICT"), nullable=False)
+    daily_session_id: Mapped[uuid.UUID | None] = mapped_column(UUID(as_uuid=True), ForeignKey("daily_sessions.id", ondelete="RESTRICT"), nullable=True)
+    duty_assignment_id: Mapped[uuid.UUID | None] = mapped_column(UUID(as_uuid=True), ForeignKey("duty_assignments.id", ondelete="RESTRICT"), nullable=True)
+    status: Mapped[str] = mapped_column(String(20), nullable=False, server_default="pending")
+    created_by_user_id: Mapped[uuid.UUID | None] = mapped_column(UUID(as_uuid=True), ForeignKey("users.id", ondelete="SET NULL"), nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, server_default=func.now())
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, server_default=func.now(), onupdate=func.now())
+
+    teacher_absence: Mapped["TeacherAbsence | None"] = relationship("TeacherAbsence")
+    original_teacher: Mapped["Teacher"] = relationship("Teacher", foreign_keys=[original_teacher_id])
+    daily_session: Mapped["DailySession | None"] = relationship("DailySession")
+    duty_assignment: Mapped["DutyAssignment | None"] = relationship("DutyAssignment")
+    created_by_user: Mapped["User | None"] = relationship("User", foreign_keys=[created_by_user_id])
+    overrides: Mapped[list["OperationalAssignmentOverride"]] = relationship("OperationalAssignmentOverride", back_populates="assignment_request")
+
+    __table_args__ = (
+        CheckConstraint(
+            "assignment_type IN ('teaching_substitution','duty_reassignment')",
+            name="ck_operational_assignment_requests_assignment_type",
+        ),
+        CheckConstraint(
+            "status IN ('pending','evaluated','pending_approval','approved','no_eligible_candidate','cancelled','completed')",
+            name="ck_operational_assignment_requests_status",
+        ),
+        CheckConstraint(
+            "(assignment_type = 'teaching_substitution' AND daily_session_id IS NOT NULL AND duty_assignment_id IS NULL) OR "
+            "(assignment_type = 'duty_reassignment' AND duty_assignment_id IS NOT NULL AND daily_session_id IS NULL)",
+            name="ck_operational_assignment_requests_target_consistency",
+        ),
+        Index("ix_oar_tenant_school_date", "tenant_id", "school_date"),
+        Index("ix_oar_tenant_type_date", "tenant_id", "assignment_type", "school_date"),
+        Index("ix_oar_daily_session", "tenant_id", "daily_session_id"),
+        Index("ix_oar_duty_assignment", "tenant_id", "duty_assignment_id"),
+        Index("ix_oar_teacher_date", "tenant_id", "original_teacher_id", "school_date"),
+    )
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# OperationalAssignmentOverride  (Phase 10E-3A: approved temporary replacement)
+# ─────────────────────────────────────────────────────────────────────────────
+
+class OperationalAssignmentOverride(Base):
+    """
+    An approved temporary replacement for one request.
+
+    Preserves the original baseline assignment (never rewrites it) and
+    preserves history: multiple overrides may exist over time for the same
+    request (e.g. B replaces A, then C replaces B) — no uniqueness
+    constraint blocks that sequence. status distinguishes which override is
+    currently in effect ('active') from superseded/cancelled/completed ones.
+    """
+    __tablename__ = "operational_assignment_overrides"
+
+    id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    tenant_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), ForeignKey("tenants.id", ondelete="CASCADE"), nullable=False)
+    assignment_request_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), ForeignKey("operational_assignment_requests.id", ondelete="RESTRICT"), nullable=False)
+    school_date: Mapped[date_type] = mapped_column(Date, nullable=False)
+    assignment_type: Mapped[str] = mapped_column(String(30), nullable=False)
+    daily_session_id: Mapped[uuid.UUID | None] = mapped_column(UUID(as_uuid=True), ForeignKey("daily_sessions.id", ondelete="RESTRICT"), nullable=True)
+    duty_assignment_id: Mapped[uuid.UUID | None] = mapped_column(UUID(as_uuid=True), ForeignKey("duty_assignments.id", ondelete="RESTRICT"), nullable=True)
+    replacement_teacher_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), ForeignKey("teachers.id", ondelete="RESTRICT"), nullable=False)
+    status: Mapped[str] = mapped_column(String(20), nullable=False, server_default="active")
+    approved_by_user_id: Mapped[uuid.UUID | None] = mapped_column(UUID(as_uuid=True), ForeignKey("users.id", ondelete="SET NULL"), nullable=True)
+    approved_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, server_default=func.now())
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, server_default=func.now(), onupdate=func.now())
+
+    assignment_request: Mapped["OperationalAssignmentRequest"] = relationship("OperationalAssignmentRequest", back_populates="overrides")
+    daily_session: Mapped["DailySession | None"] = relationship("DailySession")
+    duty_assignment: Mapped["DutyAssignment | None"] = relationship("DutyAssignment")
+    replacement_teacher: Mapped["Teacher"] = relationship("Teacher", foreign_keys=[replacement_teacher_id])
+    approved_by_user: Mapped["User | None"] = relationship("User", foreign_keys=[approved_by_user_id])
+
+    __table_args__ = (
+        CheckConstraint(
+            "assignment_type IN ('teaching_substitution','duty_reassignment')",
+            name="ck_operational_assignment_overrides_assignment_type",
+        ),
+        CheckConstraint(
+            "status IN ('active','superseded','cancelled','completed')",
+            name="ck_operational_assignment_overrides_status",
+        ),
+        CheckConstraint(
+            "(assignment_type = 'teaching_substitution' AND daily_session_id IS NOT NULL AND duty_assignment_id IS NULL) OR "
+            "(assignment_type = 'duty_reassignment' AND duty_assignment_id IS NOT NULL AND daily_session_id IS NULL)",
+            name="ck_operational_assignment_overrides_target_consistency",
+        ),
+        Index("ix_oao_tenant_school_date", "tenant_id", "school_date"),
+        Index("ix_oao_request_id", "tenant_id", "assignment_request_id"),
+        Index("ix_oao_daily_session", "tenant_id", "daily_session_id"),
+        Index("ix_oao_duty_assignment", "tenant_id", "duty_assignment_id"),
+        Index("ix_oao_teacher_date", "tenant_id", "replacement_teacher_id", "school_date"),
+    )
+
+
+# ─────────────────────────────────────────────────────────────────────────────
 # CopilotCheckpoint  (persistent graph checkpoint storage)
 # ─────────────────────────────────────────────────────────────────────────────
 

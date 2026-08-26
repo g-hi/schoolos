@@ -67,6 +67,10 @@ from services.gateway.routers.timetable_daily_sessions import (
     router as timetable_daily_sessions_router,
     teacher_router as timetable_teacher_attendance_router,
 )
+from services.gateway.routers.teacher_absences import (
+  leadership_router as teacher_absence_leadership_router,
+  teacher_router as teacher_absence_teacher_router,
+)
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -186,6 +190,8 @@ app.include_router(timetable_generation_router)
 app.include_router(timetable_daily_sessions_router)
 app.include_router(timetable_teacher_attendance_router)
 app.include_router(timetable_leadership_attendance_router)
+app.include_router(teacher_absence_teacher_router)
+app.include_router(teacher_absence_leadership_router)
 
 # =============================================================================
 # ROUTES

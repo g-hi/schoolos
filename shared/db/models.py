@@ -323,6 +323,50 @@ class Teacher(Base):
     subjects: Mapped[list["TeacherSubject"]] = relationship("TeacherSubject", back_populates="teacher", cascade="all, delete-orphan")
 
 
+class TeacherAbsence(Base):
+    """Durable record of a teacher's absence, independent of coverage."""
+    __tablename__ = "teacher_absences"
+
+    id:                    Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    tenant_id:             Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), ForeignKey("tenants.id", ondelete="CASCADE"), nullable=False, index=True)
+    teacher_id:            Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), ForeignKey("teachers.id", ondelete="RESTRICT"), nullable=False, index=True)
+    start_date:            Mapped[date_type] = mapped_column(Date, nullable=False)
+    end_date:              Mapped[date_type] = mapped_column(Date, nullable=False)
+    scope_type:            Mapped[str] = mapped_column(String(30), nullable=False, server_default="whole_day")
+    selected_periods:      Mapped[list | None] = mapped_column(JSON(none_as_null=True), nullable=True)
+    reason_code:          Mapped[str] = mapped_column(String(50), nullable=False)
+    private_note:         Mapped[str | None] = mapped_column(Text, nullable=True)
+    status:               Mapped[str] = mapped_column(String(20), nullable=False, server_default="reported")
+    source_type:          Mapped[str] = mapped_column(String(30), nullable=False)
+    reported_by_user_id:  Mapped[uuid.UUID | None] = mapped_column(UUID(as_uuid=True), ForeignKey("users.id", ondelete="SET NULL"), nullable=True)
+    confirmed_by_user_id: Mapped[uuid.UUID | None] = mapped_column(UUID(as_uuid=True), ForeignKey("users.id", ondelete="SET NULL"), nullable=True)
+    cancelled_by_user_id: Mapped[uuid.UUID | None] = mapped_column(UUID(as_uuid=True), ForeignKey("users.id", ondelete="SET NULL"), nullable=True)
+    reported_at:         Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, server_default=func.now())
+    confirmed_at:        Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    cancelled_at:        Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    created_at:          Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, server_default=func.now())
+    updated_at:          Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, server_default=func.now(), onupdate=func.now())
+
+    tenant:            Mapped["Tenant"] = relationship("Tenant")
+    teacher:           Mapped["Teacher"] = relationship("Teacher")
+    reported_by_user:  Mapped["User"] = relationship("User", foreign_keys=[reported_by_user_id])
+    confirmed_by_user: Mapped["User | None"] = relationship("User", foreign_keys=[confirmed_by_user_id])
+    cancelled_by_user: Mapped["User | None"] = relationship("User", foreign_keys=[cancelled_by_user_id])
+
+    __table_args__ = (
+        CheckConstraint("end_date >= start_date", name="ck_teacher_absences_date_range"),
+        CheckConstraint("status IN ('reported','confirmed','cancelled','closed')", name="ck_teacher_absences_status"),
+        CheckConstraint("scope_type IN ('whole_day','selected_periods')", name="ck_teacher_absences_scope_type"),
+        CheckConstraint(
+            "(scope_type = 'whole_day' AND selected_periods IS NULL) OR "
+            "(scope_type = 'selected_periods' AND selected_periods IS NOT NULL)",
+            name="ck_teacher_absences_selected_periods_scope",
+        ),
+        Index("ix_teacher_absences_tenant_date", "tenant_id", "start_date", "end_date"),
+        Index("ix_teacher_absences_tenant_teacher_date", "tenant_id", "teacher_id", "start_date", "end_date"),
+    )
+
+
 # ─────────────────────────────────────────────────────────────────────────────
 # TeacherSubject  (many-to-many: teachers ↔ subjects)
 # ─────────────────────────────────────────────────────────────────────────────

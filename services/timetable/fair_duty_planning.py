@@ -141,7 +141,10 @@ def build_fair_duty_plan(
     existing_slot_busy: set[tuple[str, uuid.UUID, str]] = set()
     existing_duty_busy: dict[tuple[str, str], list[tuple[str, str]]] = {}
     existing_slot_usage: set[tuple[uuid.UUID, uuid.UUID, str]] = set()
-    weekday_to_day_key = {weekday: day_key for day_key, weekday in operational_day_keys.items()}
+    persisted_day_to_day_key = {
+        day_index: day_key
+        for day_index, day_key in enumerate(operational_day_keys)
+    }
     for assignment in existing_assignments:
         teacher_id = getattr(assignment, "teacher_id", None)
         slot_id = getattr(assignment, "duty_slot_id", None)
@@ -150,7 +153,7 @@ def build_fair_duty_plan(
             continue
         teacher_key = str(teacher_id)
         try:
-            day_key = weekday_to_day_key[int(day)]
+            day_key = persisted_day_to_day_key[int(day)]
         except (KeyError, TypeError, ValueError):
             continue
         existing_teacher_duties[teacher_key] = existing_teacher_duties.get(teacher_key, 0) + 1
@@ -170,7 +173,7 @@ def build_fair_duty_plan(
     assigned_slot_usage: set[tuple[uuid.UUID, uuid.UUID, str]] = set(existing_slot_usage)
     assigned_counts = dict(existing_teacher_duties)
 
-    for day_key, day_of_week in operational_day_keys.items():
+    for day_index, (day_key, _actual_weekday) in enumerate(operational_day_keys.items()):
         for link in sorted(
             slot_locations,
             key=lambda item: (
@@ -232,7 +235,7 @@ def build_fair_duty_plan(
                 duty_slot_id=slot_id,
                 location_id=location_id,
                 day_key=day_key,
-                day_of_week=day_of_week,
+                day_of_week=day_index,
                 academic_year=academic_year,
                 teaching_load=teaching_load.get(teacher_id, 0),
                 duty_count_before=count_before,

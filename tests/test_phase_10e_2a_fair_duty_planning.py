@@ -85,7 +85,7 @@ def test_teaching_conflicts_and_existing_duty_conflicts_are_excluded() -> None:
     assert len(plan) == 4
 
 
-def test_existing_sunday_and_monday_duties_map_to_sunday_thursday_keys() -> None:
+def test_existing_canonical_sunday_and_monday_duties_map_to_sunday_thursday_keys() -> None:
     tenant_id = uuid.uuid4()
     teacher = _teacher(tenant_id, "existing")
     demand = _demand(tenant_id)
@@ -95,7 +95,7 @@ def test_existing_sunday_and_monday_duties_map_to_sunday_thursday_keys() -> None
         teacher_id=teacher.id,
         duty_slot_id=demand.slot.id,
         location_id=demand.location.id,
-        day_of_week=6,
+        day_of_week=0,
     )
     sunday_plan = build_fair_duty_plan(
         tenant_id=tenant_id,
@@ -113,7 +113,7 @@ def test_existing_sunday_and_monday_duties_map_to_sunday_thursday_keys() -> None
         teacher_id=teacher.id,
         duty_slot_id=demand.slot.id,
         location_id=demand.location.id,
-        day_of_week=0,
+        day_of_week=1,
     )
     monday_plan = build_fair_duty_plan(
         tenant_id=tenant_id,
@@ -126,6 +126,25 @@ def test_existing_sunday_and_monday_duties_map_to_sunday_thursday_keys() -> None
     )
     assert "d1" not in {item.day_key for item in monday_plan}
     assert "d0" in {item.day_key for item in monday_plan}
+
+
+def test_sunday_thursday_plan_exposes_canonical_day_indices() -> None:
+    tenant_id = uuid.uuid4()
+    teacher = _teacher(tenant_id, "canonical")
+    demand = _demand(tenant_id)
+
+    plan = build_fair_duty_plan(
+        tenant_id=tenant_id,
+        operational_day_keys={"d0": 6, "d1": 0, "d2": 1, "d3": 2, "d4": 3},
+        teachers=[teacher],
+        slot_locations=[demand],
+        timetable_assignments=[],
+        academic_year="2026-2027",
+    )
+
+    assert [(item.day_key, item.day_of_week) for item in plan] == [
+        ("d0", 0), ("d1", 1), ("d2", 2), ("d3", 3), ("d4", 4),
+    ]
 
 
 def test_multiple_locations_at_one_slot_are_distinct_demand() -> None:
@@ -226,8 +245,8 @@ def test_sunday_thursday_configuration_excludes_friday_demand() -> None:
         timetable_assignments=[],
         academic_year="2026-2027",
     )
-    assert {item.day_of_week for item in plan} == {0, 1, 2, 3, 6}
-    assert 4 not in {item.day_of_week for item in plan}
+    assert {item.day_of_week for item in plan} == {0, 1, 2, 3, 4}
+    assert {item.day_key for item in plan} == {"d0", "d1", "d2", "d3", "d4"}
 
 
 def test_monday_friday_configuration_excludes_sunday_demand() -> None:

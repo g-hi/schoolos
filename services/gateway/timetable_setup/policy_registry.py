@@ -87,6 +87,118 @@ def _make(
 
 
 CONSTRAINT_TYPE_REGISTRY: dict[str, ConstraintTypeDefinition] = {
+    "require_subject_match": _make(
+        key="require_subject_match",
+        title="Require Subject Match",
+        category="teacher",
+        allowed_enforcement_levels=["hard"],
+        required_parameters={},
+        optional_parameters={},
+        supported_scopes=["whole_school", "subject"],
+        validation_rules=[],
+        default_priority=5,
+        default_weight=1.0,
+        explanation="Only subject-qualified teachers may cover teaching assignments.",
+        approval_required=True,
+    ),
+    "maximum_daily_teaching_periods": _make(
+        key="maximum_daily_teaching_periods",
+        title="Maximum Daily Teaching Periods",
+        category="workload",
+        allowed_enforcement_levels=["hard"],
+        required_parameters={"max_periods": "int"},
+        optional_parameters={},
+        supported_scopes=["whole_school", "teacher"],
+        validation_rules=["max_periods_must_be_positive"],
+        default_priority=20,
+        default_weight=1.0,
+        explanation="Caps teaching periods for an operational coverage assignment.",
+        approval_required=True,
+    ),
+    "maximum_daily_operational_minutes": _make(
+        key="maximum_daily_operational_minutes",
+        title="Maximum Daily Operational Minutes",
+        category="workload",
+        allowed_enforcement_levels=["hard"],
+        required_parameters={"max_minutes": "int"},
+        optional_parameters={},
+        supported_scopes=["whole_school", "teacher"],
+        validation_rules=["max_minutes_must_be_positive"],
+        default_priority=21,
+        default_weight=1.0,
+        explanation="Caps total teaching minutes for an operational coverage assignment.",
+        approval_required=True,
+    ),
+    "protected_periods": _make(
+        key="protected_periods",
+        title="Protected Periods",
+        category="time",
+        allowed_enforcement_levels=["hard"],
+        required_parameters={"period_numbers": "list[int]"},
+        optional_parameters={},
+        supported_scopes=["whole_school", "teacher"],
+        validation_rules=["period_numbers_must_be_positive"],
+        default_priority=22,
+        default_weight=1.0,
+        explanation="Prevents operational assignment during protected periods.",
+        approval_required=True,
+    ),
+    "prefer_subject_match": _make(
+        key="prefer_subject_match",
+        title="Prefer Subject Match",
+        category="preference",
+        allowed_enforcement_levels=["preference", "advisory"],
+        required_parameters={},
+        optional_parameters={},
+        supported_scopes=["whole_school", "subject"],
+        validation_rules=[],
+        default_priority=50,
+        default_weight=1.0,
+        explanation="Prefers subject-qualified teachers among eligible candidates.",
+        approval_required=True,
+    ),
+    "prefer_lower_baseline_workload": _make(
+        key="prefer_lower_baseline_workload",
+        title="Prefer Lower Baseline Workload",
+        category="preference",
+        allowed_enforcement_levels=["preference", "advisory"],
+        required_parameters={},
+        optional_parameters={},
+        supported_scopes=["whole_school", "teacher"],
+        validation_rules=[],
+        default_priority=51,
+        default_weight=1.0,
+        explanation="Prefers lower baseline operational workload among eligible candidates.",
+        approval_required=True,
+    ),
+    "prefer_lower_recent_substitution_burden": _make(
+        key="prefer_lower_recent_substitution_burden",
+        title="Prefer Lower Recent Substitution Burden",
+        category="preference",
+        allowed_enforcement_levels=["preference", "advisory"],
+        required_parameters={},
+        optional_parameters={},
+        supported_scopes=["whole_school", "teacher"],
+        validation_rules=[],
+        default_priority=52,
+        default_weight=1.0,
+        explanation="Prefers lower recent substitution burden among eligible candidates.",
+        approval_required=True,
+    ),
+    "ordered_substitution_fallback_tiers": _make(
+        key="ordered_substitution_fallback_tiers",
+        title="Ordered Substitution Fallback Tiers",
+        category="policy",
+        allowed_enforcement_levels=["hard", "advisory"],
+        required_parameters={"tiers": "list[object]"},
+        optional_parameters={},
+        supported_scopes=["whole_school", "campus"],
+        validation_rules=["fallback_tiers_must_be_valid"],
+        default_priority=60,
+        default_weight=1.0,
+        explanation="Defines the leadership-approved substitution fallback order.",
+        approval_required=True,
+    ),
     "teacher_unavailable": _make(
         key="teacher_unavailable",
         title="Teacher Unavailable",
@@ -470,6 +582,8 @@ def validate_constraint_parameters(definition: ConstraintTypeDefinition, paramet
         "required_minutes",
         "period_number",
         "weekday",
+        "max_periods",
+        "max_minutes",
     ):
         if key in parameters and (not isinstance(parameters[key], int) or int(parameters[key]) <= 0):
             errors.append(f"{key} must be a positive integer.")
@@ -490,5 +604,9 @@ def validate_constraint_parameters(definition: ConstraintTypeDefinition, paramet
 
     if "required_room_type" in parameters and (not isinstance(parameters["required_room_type"], str) or not parameters["required_room_type"].strip()):
         errors.append("required_room_type must be a non-empty string.")
+
+    if definition["key"] == "ordered_substitution_fallback_tiers":
+        if not isinstance(parameters.get("tiers"), list) or not parameters["tiers"]:
+            errors.append("tiers must be a non-empty list.")
 
     return errors
